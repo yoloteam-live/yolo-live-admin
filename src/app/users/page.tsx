@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { Search, Filter, Edit2, Shield, Ban, Diamond, Sparkles, CheckCircle2, XCircle, Loader2, Crown, UserMinus, Bell, BellOff, MessageSquare, MessageSquareOff } from 'lucide-react';
+import { Search, Filter, Edit2, Shield, Ban, Diamond, Sparkles, CheckCircle2, XCircle, Loader2, Crown, UserMinus, Bell, BellOff, MessageSquare, MessageSquareOff, Trash2, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
 
@@ -30,6 +30,39 @@ export default function UsersPage() {
   const [demoteUser, setDemoteUser] = useState<any>(null);
   const [demoteReason, setDemoteReason] = useState('');
   const [demoting, setDemoting] = useState(false);
+
+  // Super-admin-only: hard-delete a user via the admin_delete_user RPC.
+  // The RPC enforces super_admin role + self-delete + last-super-admin
+  // guards server-side; we still gate the UI button by isSuperAdmin
+  // so managers never see it. Confirmation modal requires typing the
+  // user's display id to prevent accidental clicks.
+  const [deleteUser, setDeleteUser] = useState<any>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState('');
+  const [deleting, setDeleting] = useState(false);
+
+  async function performDeleteUser() {
+    if (!deleteUser) return;
+    if (String(deleteConfirmId).trim() !== String(deleteUser.display_id)) {
+      alert('Display ID does not match. Deletion cancelled.');
+      return;
+    }
+    setDeleting(true);
+    const { data, error } = await supabase.rpc('admin_delete_user', {
+      p_user_id: deleteUser.id,
+    });
+    setDeleting(false);
+    if (error) {
+      alert('Delete failed: ' + error.message);
+      return;
+    }
+    if (!data?.success) {
+      alert('Delete failed: ' + (data?.message || 'Unknown error'));
+      return;
+    }
+    setUsers(users.filter(u => u.id !== deleteUser.id));
+    setDeleteUser(null);
+    setDeleteConfirmId('');
+  }
 
   async function demoteAgencyOwner() {
     if (!demoteUser) return;
@@ -423,13 +456,22 @@ export default function UsersPage() {
                     <button className="p-2 hover:bg-white/5 rounded-lg text-gray-400 hover:text-blue-400 transition-all">
                       <Shield size={16} />
                     </button>
-                    <button 
+                    <button
                       className={`p-2 hover:bg-white/5 rounded-lg transition-all ${user.status === 'Banned' ? 'text-green-400 hover:bg-green-400/10' : 'text-gray-400 hover:text-red-400 hover:bg-red-400/10'}`}
                       onClick={() => toggleBan(user.id, user.status)}
                       title={user.status === 'Banned' ? 'Unban User' : 'Ban User'}
                     >
                       <Ban size={16} />
                     </button>
+                    {isSuperAdmin && (
+                      <button
+                        className="p-2 hover:bg-red-500/20 rounded-lg text-gray-400 hover:text-red-500 transition-all"
+                        onClick={() => { setDeleteUser(user); setDeleteConfirmId(''); }}
+                        title="Permanently delete user + all their activity"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -560,6 +602,78 @@ export default function UsersPage() {
               >
                 {demoting ? <Loader2 className="animate-spin" size={18} /> : <UserMinus size={16} />}
                 Demote
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete User Modal — hard delete via admin_delete_user RPC */}
+      {deleteUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-[#1E1A34] border border-red-500/30 rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
+            <div className="p-6 border-b border-red-500/20 flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-red-500/20 border border-red-500/40 flex items-center justify-center flex-shrink-0">
+                <AlertTriangle size={20} className="text-red-400" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-lg font-black text-white">Permanently Delete User</h3>
+                <p className="text-xs text-gray-400 mt-0.5">This cannot be undone.</p>
+              </div>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-black/30 border border-white/5 rounded-xl p-3">
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wider mb-1">User</p>
+                <p className="text-white font-bold">{deleteUser.full_name || 'User'}</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  ID: <span className="font-mono">{deleteUser.display_id}</span> · Role: {deleteUser.role || 'user'}
+                </p>
+              </div>
+
+              <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-3">
+                <p className="text-xs text-red-300 font-bold mb-1">⚠️ This will delete:</p>
+                <ul className="text-xs text-gray-300 list-disc pl-4 space-y-0.5">
+                  <li>Their profile, wallet (diamonds + beans)</li>
+                  <li>All gifts sent/received, live streams, game bets</li>
+                  <li>Chats, comments, follows, lucky bag history</li>
+                  <li>Auth identity + session</li>
+                </ul>
+                <p className="text-[10px] text-gray-500 mt-2">
+                  Audit log records the action under your admin id.
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs text-gray-400 font-bold uppercase tracking-wider">
+                  Type the display ID <span className="text-red-400 font-mono">{deleteUser.display_id}</span> to confirm
+                </label>
+                <input
+                  type="text"
+                  className="w-full mt-1.5 bg-black/30 border border-white/10 focus:border-red-500/50 rounded-xl px-4 py-2.5 text-white font-mono text-sm focus:outline-none"
+                  placeholder="Display ID"
+                  value={deleteConfirmId}
+                  onChange={(e) => setDeleteConfirmId(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            <div className="p-6 bg-white/5 flex gap-3">
+              <button
+                className="flex-1 bg-white/5 hover:bg-white/10 text-white font-bold py-3 rounded-xl"
+                onClick={() => { setDeleteUser(null); setDeleteConfirmId(''); }}
+                disabled={deleting}
+              >
+                Cancel
+              </button>
+              <button
+                className="flex-[2] bg-gradient-to-r from-red-500 to-red-700 hover:from-red-600 hover:to-red-800 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-red-500/20"
+                onClick={performDeleteUser}
+                disabled={deleting || String(deleteConfirmId).trim() !== String(deleteUser.display_id)}
+              >
+                {deleting ? <Loader2 className="animate-spin" size={18} /> : <Trash2 size={16} />}
+                Delete Forever
               </button>
             </div>
           </div>

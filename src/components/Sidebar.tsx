@@ -63,6 +63,7 @@ const navItems: NavItem[] = [
   { name: 'Game History', href: '/game-history', icon: Trophy },
   { name: 'Gifts Catalog', href: '/gifts', icon: Gift, superOnly: true },
   { name: 'Audio Templates', href: '/audio-templates', icon: ImageIcon, superOnly: true },
+  { name: 'Profile Frames', href: '/profile-frames', icon: GalleryHorizontal, superOnly: true },
   { name: 'VIP Tiers', href: '/vip-tiers', icon: Crown, superOnly: true },
   { name: 'Content & Progression', href: '/content', icon: Sparkles, superOnly: true },
   { name: 'Splash Manager', href: '/splash', icon: ImageIcon },

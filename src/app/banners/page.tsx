@@ -12,6 +12,7 @@ type Banner = {
   link_url: string | null;
   display_order: number;
   is_active: boolean;
+  position: 'top' | 'bottom';
   created_at: string;
   updated_at: string;
 };
@@ -87,6 +88,7 @@ export default function BannersPage() {
       link_url:      editing.link_url?.trim() || null,
       display_order: editing.display_order ?? 0,
       is_active:     editing.is_active ?? true,
+      position:      editing.position ?? 'top',
     };
 
     const { error } = editing.id
@@ -144,7 +146,7 @@ export default function BannersPage() {
           </div>
         </div>
         <button
-          onClick={() => setEditing({ image_url: "", link_url: "", display_order: (rows.at(-1)?.display_order ?? -1) + 1, is_active: activeCount < MAX_ACTIVE })}
+          onClick={() => setEditing({ image_url: "", link_url: "", display_order: (rows.at(-1)?.display_order ?? -1) + 1, is_active: activeCount < MAX_ACTIVE, position: 'top' })}
           className="bg-gradient-to-r from-pink-500 to-violet-600 text-white font-bold py-2.5 px-5 rounded-xl flex items-center gap-2 hover:scale-[1.02] shadow-lg shadow-pink-500/20"
         >
           <Plus size={16} /> New banner
@@ -192,13 +194,22 @@ export default function BannersPage() {
                     )}
                   </p>
                 </div>
-                <span className={`inline-flex items-center gap-1 self-start px-2 py-0.5 rounded-md text-[10px] font-bold border ${
-                  b.is_active
-                    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
-                    : "bg-white/5 text-gray-400 border-white/10"
-                }`}>
-                  {b.is_active ? <><CheckCircle2 size={10} /> Live</> : <><XCircle size={10} /> Off</>}
-                </span>
+                <div className="flex items-center gap-2 self-start">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                    (b.position ?? 'top') === 'top'
+                      ? "bg-pink-500/15 text-pink-300 border-pink-500/30"
+                      : "bg-violet-500/15 text-violet-300 border-violet-500/30"
+                  }`}>
+                    {(b.position ?? 'top') === 'top' ? 'TOP' : 'BOTTOM'}
+                  </span>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${
+                    b.is_active
+                      ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                      : "bg-white/5 text-gray-400 border-white/10"
+                  }`}>
+                    {b.is_active ? <><CheckCircle2 size={10} /> Live</> : <><XCircle size={10} /> Off</>}
+                  </span>
+                </div>
               </div>
 
               {/* Actions */}
@@ -311,6 +322,38 @@ export default function BannersPage() {
                   placeholder="https://… or deep link"
                 />
                 <p className="text-[10px] text-gray-600 mt-1">Empty = banner just sits there decoratively.</p>
+              </div>
+
+              <div>
+                <label className="text-[10px] uppercase text-gray-500 font-bold tracking-widest mb-1.5 block">
+                  Position on home screen
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ ...editing, position: 'top' })}
+                    className={`px-3 py-2 rounded-lg border text-sm font-bold text-left ${
+                      (editing.position ?? 'top') === 'top'
+                        ? 'bg-pink-500/20 border-pink-500/50 text-pink-200'
+                        : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                    }`}
+                  >
+                    Top
+                    <p className="text-[9px] font-normal text-gray-500 mt-0.5">Hero slot above live grid</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditing({ ...editing, position: 'bottom' })}
+                    className={`px-3 py-2 rounded-lg border text-sm font-bold text-left ${
+                      editing.position === 'bottom'
+                        ? 'bg-violet-500/20 border-violet-500/50 text-violet-200'
+                        : 'bg-white/5 border-white/10 text-gray-400 hover:bg-white/10'
+                    }`}
+                  >
+                    Bottom
+                    <p className="text-[9px] font-normal text-gray-500 mt-0.5">Below the live cards</p>
+                  </button>
+                </div>
               </div>
 
               <label className="flex items-center gap-2 text-sm text-gray-300">
