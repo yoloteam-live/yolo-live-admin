@@ -68,7 +68,7 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-500 to-purple-600 mb-4 shadow-lg shadow-pink-500/20">
             <Shield size={32} className="text-white" />
           </div>
-          <h1 className="text-3xl font-black text-white">YOLO Super Admin</h1>
+          <h1 className="text-3xl font-black text-white">Care Live Super Admin</h1>
           <p className="text-gray-500 text-sm mt-2">Sign in with your admin credentials</p>
         </div>
 

@@ -16,9 +16,18 @@ type FrameRow = {
 };
 
 const BUCKET = 'profile-frames';
+const BUNDLED_PREVIEWS: Record<string, string> = {
+  'bundled://heart-fantasy': '/profile-frames/heart-fantasy.webp',
+  'bundled://angel-wing': '/profile-frames/angel-wing.webp',
+  'bundled://royal-gold': '/profile-frames/royal-gold.webp',
+};
 const emptyFrame: FrameRow = {
   id: '', name: '', frame_url: '', diamond_cost: 0, is_active: true, display_order: 0,
 };
+
+function framePreviewUrl(frameUrl: string) {
+  return BUNDLED_PREVIEWS[frameUrl] || frameUrl;
+}
 
 export default function ProfileFramesPage() {
   const router = useRouter();
@@ -96,7 +105,7 @@ export default function ProfileFramesPage() {
             <div key={frame.id} className="rounded-2xl overflow-hidden border border-[#302b55] bg-[#17152e]">
               <div className="aspect-square bg-[#0e1029] p-3 relative">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={frame.frame_url} alt={frame.name} className="w-full h-full object-contain" />
+                <img src={framePreviewUrl(frame.frame_url)} alt={frame.name} className="w-full h-full object-contain" />
                 <div className="absolute top-3 left-3 right-3 flex justify-between">
                   <span className="rounded-lg bg-violet-600/80 text-white text-[10px] font-bold px-2 py-1">
                     {frame.diamond_cost === 0 ? 'FREE' : `${frame.diamond_cost.toLocaleString()} 💎`}
@@ -211,7 +220,7 @@ function FrameModal({ row, creating, onClose }: { row: FrameRow; creating: boole
             <button onClick={() => inputRef.current?.click()} className="w-full aspect-square rounded-2xl border border-dashed border-fuchsia-500/50 bg-[#0e1029] flex items-center justify-center overflow-hidden">
               {value.frame_url
                 // eslint-disable-next-line @next/next/no-img-element
-                ? <img src={value.frame_url} alt="Preview" className="w-full h-full object-contain" />
+                ? <img src={framePreviewUrl(value.frame_url)} alt="Preview" className="w-full h-full object-contain" />
                 : <span className="text-gray-500 flex flex-col items-center gap-2"><Upload />Upload animated WebP</span>}
             </button>
             <input ref={inputRef} hidden type="file" accept=".webp,image/webp" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
