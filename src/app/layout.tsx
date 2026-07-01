@@ -7,7 +7,7 @@ import AdminShell from "@/components/AdminShell";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "YOLO Super Admin",
+  title: "Care Live Super Admin",
   description: "Advanced Management Control Panel",
 };
 

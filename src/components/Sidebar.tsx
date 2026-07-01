@@ -29,6 +29,7 @@ import {
   Image as ImageIcon,
   GalleryHorizontal,
   UserCog,
+  Video,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -63,6 +64,7 @@ const navItems: NavItem[] = [
   { name: 'Game History', href: '/game-history', icon: Trophy },
   { name: 'Gifts Catalog', href: '/gifts', icon: Gift, superOnly: true },
   { name: 'Audio Templates', href: '/audio-templates', icon: ImageIcon, superOnly: true },
+  { name: 'Mall Intros', href: '/mall-intros', icon: Video, superOnly: true },
   { name: 'Profile Frames', href: '/profile-frames', icon: GalleryHorizontal, superOnly: true },
   { name: 'VIP Tiers', href: '/vip-tiers', icon: Crown, superOnly: true },
   { name: 'Content & Progression', href: '/content', icon: Sparkles, superOnly: true },
@@ -156,7 +158,7 @@ export default function Sidebar() {
   return (
     <aside className="w-64 h-full bg-[#1E1A34] border-r border-[#251B45] flex flex-col">
       <div className="p-6">
-        <h1 className="text-2xl font-black gradient-text">YOLO ADMIN</h1>
+        <h1 className="text-2xl font-black gradient-text">CARE LIVE ADMIN</h1>
         <p className="text-[10px] text-gray-500 font-bold tracking-widest mt-1">
           {profile?.role === 'manager' ? 'MANAGER PANEL' : 'SUPER ADMIN PANEL'}
         </p>
