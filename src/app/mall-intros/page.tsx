@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { CheckCircle2, Edit2, Image as ImageIcon, Loader2, Plus, Trash2, ToggleLeft, ToggleRight, Upload, Video, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
+import { optimizeImageFile } from '@/lib/imageOptimizer';
 
 type IntroRow = {
   id: string;
@@ -14,11 +15,20 @@ type IntroRow = {
   diamond_cost: number;
   is_active: boolean;
   display_order: number;
+  duration_ms?: number | null;
+  file_size_bytes?: number | null;
+  video_width?: number | null;
+  video_height?: number | null;
+  video_mime_type?: string | null;
 };
 
 const BUCKET = 'mall-intros';
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 180 * 1024;
+const MAX_VIDEO_BYTES = 5 * 1024 * 1024;
+const MIN_INTRO_DURATION_SECONDS = 7.5;
+const MAX_INTRO_DURATION_SECONDS = 8.5;
+const MAX_INTRO_WIDTH = 720;
+const MAX_INTRO_HEIGHT = 1280;
 const BUNDLED_THUMBS: Record<string, string> = {
   'bundled://football-cup.webp': '/mall/intro/football-cup.webp',
   'bundled://blue-roses.webp': '/mall/intro/blue-roses.webp',
@@ -32,10 +42,42 @@ const emptyIntro: IntroRow = {
   diamond_cost: 0,
   is_active: true,
   display_order: 0,
+  duration_ms: 8000,
+  file_size_bytes: null,
+  video_width: null,
+  video_height: null,
+  video_mime_type: null,
 };
 
 function previewUrl(url: string) {
   return BUNDLED_THUMBS[url] || url;
+}
+
+function loadVideoMetadata(file: File): Promise<{ duration: number; width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    const url = URL.createObjectURL(file);
+    const cleanup = () => {
+      URL.revokeObjectURL(url);
+      video.removeAttribute('src');
+      video.load();
+    };
+    video.preload = 'metadata';
+    video.onloadedmetadata = () => {
+      const metadata = {
+        duration: video.duration,
+        width: video.videoWidth,
+        height: video.videoHeight,
+      };
+      cleanup();
+      resolve(metadata);
+    };
+    video.onerror = () => {
+      cleanup();
+      reject(new Error('Could not read video metadata. Please upload a valid MP4.'));
+    };
+    video.src = url;
+  });
 }
 
 export default function MallIntrosPage() {
@@ -170,27 +212,62 @@ function IntroModal({ row, creating, onClose }: { row: IntroRow; creating: boole
     const isThumb = kind === 'thumb';
     const okType = isThumb
       ? ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)
-      : ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v'].includes(file.type) || /\.(mp4|webm|mov|m4v)$/i.test(file.name);
+      : file.type === 'video/mp4' && /\.mp4$/i.test(file.name);
     if (!okType) {
-      alert(isThumb ? 'Thumbnail must be JPG, PNG, or WebP.' : 'Video must be MP4, WebM, MOV, or M4V.');
+      alert(isThumb ? 'Thumbnail must be JPG, PNG, or WebP.' : 'Intro video must be an optimized MP4 file.');
       return;
     }
-    if (file.size > (isThumb ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES)) {
-      alert(isThumb ? 'Thumbnail must be 5 MB or smaller.' : 'Video must be 50 MB or smaller.');
+    let uploadFile = file;
+    if (isThumb) {
+      uploadFile = await optimizeImageFile(file, {
+        maxWidth: 480,
+        maxHeight: 640,
+        quality: 0.76,
+        outputType: 'image/webp',
+        filenamePrefix: value.id || value.name || file.name,
+      });
+    }
+    if (uploadFile.size > (isThumb ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES)) {
+      alert(isThumb ? 'Thumbnail is still larger than 180 KB after optimization. Please use a simpler image.' : 'Intro video must be 5 MB or smaller.');
       return;
+    }
+    let videoMetadata: { duration: number; width: number; height: number } | null = null;
+    if (!isThumb) {
+      try {
+        videoMetadata = await loadVideoMetadata(file);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Could not read video metadata.');
+        return;
+      }
+      if (videoMetadata.duration < MIN_INTRO_DURATION_SECONDS || videoMetadata.duration > MAX_INTRO_DURATION_SECONDS) {
+        alert(`Intro video must be about 8 seconds (${MIN_INTRO_DURATION_SECONDS}-${MAX_INTRO_DURATION_SECONDS}s). This file is ${videoMetadata.duration.toFixed(2)}s.`);
+        return;
+      }
+      if (videoMetadata.width > MAX_INTRO_WIDTH || videoMetadata.height > MAX_INTRO_HEIGHT) {
+        alert(`Intro video must be ${MAX_INTRO_WIDTH}x${MAX_INTRO_HEIGHT} or smaller. This file is ${videoMetadata.width}x${videoMetadata.height}.`);
+        return;
+      }
     }
     const setUploading = isThumb ? setUploadingThumb : setUploadingVideo;
     setUploading(true);
-    const path = buildPath(file, kind);
-    const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
-      contentType: file.type || (isThumb ? 'image/webp' : 'video/mp4'),
-      cacheControl: '3600',
+    const path = buildPath(uploadFile, kind);
+    const { error } = await supabase.storage.from(BUCKET).upload(path, uploadFile, {
+      contentType: isThumb ? uploadFile.type : 'video/mp4',
+      cacheControl: '31536000',
       upsert: false,
     });
     setUploading(false);
     if (error) { alert(`Upload failed: ${error.message}`); return; }
     const url = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
-    setValue((current) => isThumb ? { ...current, thumbnail_url: url } : { ...current, video_url: url });
+    setValue((current) => isThumb ? { ...current, thumbnail_url: url } : {
+      ...current,
+      video_url: url,
+      duration_ms: Math.round((videoMetadata?.duration || 8) * 1000),
+      file_size_bytes: uploadFile.size,
+      video_width: videoMetadata?.width || null,
+      video_height: videoMetadata?.height || null,
+      video_mime_type: 'video/mp4',
+    });
   }
 
   async function save() {
@@ -209,6 +286,11 @@ function IntroModal({ row, creating, onClose }: { row: IntroRow; creating: boole
       diamond_cost: Number(value.diamond_cost) || 0,
       display_order: Number(value.display_order) || 0,
       is_active: value.is_active,
+      duration_ms: value.duration_ms || 8000,
+      file_size_bytes: value.file_size_bytes || null,
+      video_width: value.video_width || null,
+      video_height: value.video_height || null,
+      video_mime_type: value.video_mime_type || null,
       updated_at: new Date().toISOString(),
     };
     const { error } = creating
@@ -267,7 +349,17 @@ function IntroModal({ row, creating, onClose }: { row: IntroRow; creating: boole
               {uploadingVideo ? <Loader2 className="animate-spin" size={16} /> : <Video size={16} />}
               Upload intro video
             </button>
-            <input ref={videoRef} hidden type="file" accept=".mp4,.webm,.mov,.m4v,video/*" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0], 'video')} />
+            <input ref={videoRef} hidden type="file" accept=".mp4,video/mp4" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0], 'video')} />
+            <p className="text-[11px] leading-5 text-gray-500">
+              MP4 only. 7.5-8.5s, max 5 MB, max 720x1280, H.264/AAC recommended.
+            </p>
+            {value.video_url && (
+              <div className="rounded-xl border border-white/5 bg-black/15 px-3 py-2 text-[11px] text-gray-400">
+                <div>Duration: {value.duration_ms ? `${(value.duration_ms / 1000).toFixed(2)}s` : 'unknown'}</div>
+                <div>Size: {value.file_size_bytes ? `${(value.file_size_bytes / 1024 / 1024).toFixed(2)} MB` : 'unknown'}</div>
+                <div>Resolution: {value.video_width && value.video_height ? `${value.video_width}x${value.video_height}` : 'unknown'}</div>
+              </div>
+            )}
 
             <div className="aspect-[3/4] rounded-2xl overflow-hidden bg-[#0e1029] border border-[#39325f]">
               {value.thumbnail_url ? (

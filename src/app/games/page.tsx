@@ -15,6 +15,66 @@ import {
   CheckCircle2
 } from 'lucide-react';
 
+type GameSetting = {
+  id: string;
+  is_active: boolean;
+  win_chance_percent: number;
+  min_bet?: number | null;
+  max_bet?: number | null;
+  daily_loss_cap?: number | null;
+  multipliers?: unknown;
+  round_duration_s?: number | null;
+  result_display_s?: number | null;
+  house_profile_id?: string | null;
+  forced_next_category?: string | null;
+  forced_next_result?: string | null;
+  special_result_rules?: {
+    pizza_enabled?: boolean;
+    pizza_per_hour?: number;
+    pizza_max_per_day?: number;
+    salad_enabled?: boolean;
+    salad_per_hour?: number;
+    salad_max_per_day?: number;
+    target_payout_min_percent?: number;
+    target_payout_max_percent?: number;
+  } | null;
+  _houseDisplayId?: string;
+  _multipliersText?: string;
+};
+
+type HouseProfile = {
+  id: string;
+  full_name?: string | null;
+  display_id?: number | null;
+  diamonds?: number | null;
+};
+
+const GREEDY_LION_ITEMS = [
+  { id: 'corn', label: 'Corn' },
+  { id: 'chicken', label: 'Chicken' },
+  { id: 'shrimp', label: 'Shrimp' },
+  { id: 'tomato', label: 'Tomato' },
+  { id: 'ham', label: 'Ham' },
+  { id: 'pepper', label: 'Pepper' },
+  { id: 'fish', label: 'Fish' },
+  { id: 'carrot', label: 'Carrot' },
+];
+
+const DEFAULT_GREEDY_RULES = {
+  pizza_enabled: true,
+  pizza_per_hour: 0,
+  pizza_max_per_day: 0,
+  salad_enabled: true,
+  salad_per_hour: 0,
+  salad_max_per_day: 0,
+  target_payout_min_percent: 30,
+  target_payout_max_percent: 40,
+};
+
+function greedyRules(game: GameSetting) {
+  return { ...DEFAULT_GREEDY_RULES, ...(game.special_result_rules || {}) };
+}
+
 export default function GameControlPage() {
   // Super-admin only. Managers who paste the URL get bounced.
   const router = useRouter();
@@ -25,7 +85,8 @@ export default function GameControlPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [settings, setSettings] = useState<any[]>([]);
+  const [settings, setSettings] = useState<GameSetting[]>([]);
+  const [houseProfiles, setHouseProfiles] = useState<Record<string, HouseProfile>>({});
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
@@ -49,6 +110,18 @@ export default function GameControlPage() {
 
     if (data) {
       setSettings(data);
+      const houseIds = data
+        .map((row: GameSetting) => row.house_profile_id)
+        .filter(Boolean);
+      if (houseIds.length) {
+        const { data: profiles } = await supabase
+          .from('profiles')
+          .select('id, full_name, display_id, diamonds')
+          .in('id', houseIds);
+        setHouseProfiles(Object.fromEntries((profiles || []).map((profile: HouseProfile) => [profile.id, profile])));
+      } else {
+        setHouseProfiles({});
+      }
     }
     setLoading(false);
   }
@@ -75,31 +148,90 @@ export default function GameControlPage() {
   // multipliers field is a JSONB so we accept any valid JSON the admin
   // pastes in (teen_patti uses {"win":2}, fruit_roulette uses an array
   // of slot definitions).
-  async function saveLimits(game: any) {
-    let parsedMultipliers: any = null;
+  async function saveLimits(game: GameSetting) {
+    let parsedMultipliers: unknown = null;
     try {
       parsedMultipliers = JSON.parse(game._multipliersText ?? JSON.stringify(game.multipliers ?? null));
-    } catch (_e) {
+    } catch {
       alert('Multipliers field must be valid JSON.');
       return;
+    }
+    if (game.id === 'greedy_lion' && !game.house_profile_id) {
+      const displayId = String(game._houseDisplayId ?? '').trim();
+      if (!displayId) {
+        alert('Greedy Lion needs a payout-owner user id before saving.');
+        return;
+      }
+      const parsedDisplayId = Number(displayId);
+      if (!Number.isInteger(parsedDisplayId)) {
+        alert('Payout-owner user id must be a number like 202601.');
+        return;
+      }
+      const { data: owner, error: ownerError } = await supabase
+        .from('profiles')
+        .select('id, full_name, display_id, diamonds')
+        .eq('display_id', parsedDisplayId)
+        .maybeSingle();
+      if (ownerError || !owner?.id) {
+        alert('No user found for payout-owner user id ' + displayId);
+        return;
+      }
+      game.house_profile_id = owner.id;
+      setHouseProfiles((current) => ({ ...current, [owner.id]: owner as HouseProfile }));
+    }
+    if (game.id === 'greedy_lion') {
+      const duration = Number(game.round_duration_s ?? 30);
+      const display = Number(game.result_display_s ?? 15);
+      const rules = greedyRules(game);
+      const minPayout = Number(rules.target_payout_min_percent ?? 30);
+      const maxPayout = Number(rules.target_payout_max_percent ?? 40);
+      if (!duration || duration < 5) {
+        alert('Round duration must be at least 5 seconds.');
+        return;
+      }
+      if (!display || display < 3) {
+        alert('Result popup duration must be at least 3 seconds.');
+        return;
+      }
+      if (minPayout < 0 || maxPayout < minPayout) {
+        alert('Greedy Lion payout range must be 0 or higher, and max must be greater than or equal to min.');
+        return;
+      }
+    }
+    const patch: Partial<GameSetting> = {
+      win_chance_percent: game.win_chance_percent,
+      is_active:       game.is_active,
+      min_bet:        game.min_bet ?? 10,
+      // max_bet NULL = uncapped (the place_game_bet RPC skips the
+      // per-round check when this is null). Don't coerce blank → 100k.
+      max_bet:        game.max_bet ?? null,
+      daily_loss_cap: game.daily_loss_cap || null,
+      multipliers:    parsedMultipliers,
+    };
+    if (game.id === 'greedy_lion') {
+      patch.round_duration_s = Number(game.round_duration_s ?? 30);
+      patch.result_display_s = Number(game.result_display_s ?? 15);
+      patch.house_profile_id = game.house_profile_id;
+      patch.forced_next_category = ['pizza', 'salad'].includes(game.forced_next_result || '') ? game.forced_next_result : null;
+      patch.forced_next_result = game.forced_next_result || null;
+      patch.special_result_rules = greedyRules(game);
     }
     setSaving(true);
     const { error } = await supabase
       .from('game_settings')
-      .update({
-        min_bet:        game.min_bet ?? 10,
-        // max_bet NULL = uncapped (the place_game_bet RPC skips the
-        // per-round check when this is null). Don't coerce blank → 100k.
-        max_bet:        game.max_bet ?? null,
-        daily_loss_cap: game.daily_loss_cap || null,
-        multipliers:    parsedMultipliers,
-      })
+      .update(patch)
       .eq('id', game.id);
     setSaving(false);
     if (error) { alert('Failed: ' + error.message); return; }
     setSuccess(true);
     setTimeout(() => setSuccess(false), 3000);
     fetchSettings();
+  }
+
+  function gameDisplayName(id: string) {
+    if (id === 'greedy_lion') return 'Greedy Lion';
+    if (id === 'royal_feast') return 'Royal Feast';
+    return id.replaceAll('_', ' ');
   }
 
   if (loading) {
@@ -146,7 +278,7 @@ export default function GameControlPage() {
                   <Trophy className="text-white" size={28} />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-black text-white capitalize">{game.id.replace('_', ' ')}</h2>
+                  <h2 className="text-2xl font-black text-white capitalize">{gameDisplayName(game.id)}</h2>
                   <div className="flex items-center gap-2">
                     <div className={`w-2 h-2 rounded-full ${game.is_active ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
                     <span className="text-[10px] font-black uppercase tracking-widest text-gray-500">
@@ -171,39 +303,86 @@ export default function GameControlPage() {
                 <div className="flex items-center justify-between mb-4">
                   <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
                     <Settings2 size={14} className="text-pink-500" />
-                    Win Probability (RTP)
+                    {game.id === 'greedy_lion' ? 'Target Payout Range' : 'Win Probability (RTP)'}
                   </label>
-                  <span className="text-2xl font-black text-pink-500">{game.win_chance_percent}%</span>
+                  <span className="text-2xl font-black text-pink-500">
+                    {game.id === 'greedy_lion'
+                      ? `${greedyRules(game).target_payout_min_percent}-${greedyRules(game).target_payout_max_percent}%`
+                      : `${game.win_chance_percent}%`}
+                  </span>
                 </div>
                 
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="100" 
-                  className="w-full h-3 bg-[#0E111E] rounded-lg appearance-none cursor-pointer accent-pink-500"
-                  value={game.win_chance_percent}
-                  onChange={(e) => {
-                    const newSettings = settings.map(s => s.id === game.id ? { ...s, win_chance_percent: parseInt(e.target.value) } : s);
-                    setSettings(newSettings);
-                  }}
-                />
+                {game.id === 'greedy_lion' ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] uppercase text-gray-500 font-bold">Minimum payout %</label>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                        value={Number(greedyRules(game).target_payout_min_percent ?? 30)}
+                        onChange={(e) => {
+                          const rules = greedyRules(game);
+                          const min = Math.max(0, parseInt(e.target.value) || 0);
+                          const max = Math.max(min, Number(rules.target_payout_max_percent ?? min));
+                          const nextRules = { ...rules, target_payout_min_percent: min, target_payout_max_percent: max };
+                          setSettings(settings.map((s) => s.id === game.id ? { ...s, win_chance_percent: min, special_result_rules: nextRules } : s));
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase text-gray-500 font-bold">Maximum payout %</label>
+                      <input
+                        type="number"
+                        min={0}
+                        className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                        value={Number(greedyRules(game).target_payout_max_percent ?? 40)}
+                        onChange={(e) => {
+                          const rules = greedyRules(game);
+                          const min = Number(rules.target_payout_min_percent ?? 0);
+                          const max = Math.max(min, parseInt(e.target.value) || 0);
+                          const nextRules = { ...rules, target_payout_max_percent: max };
+                          setSettings(settings.map((s) => s.id === game.id ? { ...s, special_result_rules: nextRules } : s));
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="100" 
+                    className="w-full h-3 bg-[#0E111E] rounded-lg appearance-none cursor-pointer accent-pink-500"
+                    value={game.win_chance_percent}
+                    onChange={(e) => {
+                      const newSettings = settings.map(s => s.id === game.id ? { ...s, win_chance_percent: parseInt(e.target.value) } : s);
+                      setSettings(newSettings);
+                    }}
+                  />
+                )}
                 
                 <div className="flex justify-between mt-4">
-                  <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">Greedy (Admin Wins)</span>
-                  <span className="text-[10px] font-bold text-green-500 uppercase tracking-widest">Giving (User Wins)</span>
+                  <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">
+                    {game.id === 'greedy_lion' ? 'Lower Payout' : 'Greedy (Admin Wins)'}
+                  </span>
+                  <span className="text-[10px] font-bold text-green-500 uppercase tracking-widest">
+                    {game.id === 'greedy_lion' ? 'Higher Payout' : 'Giving (User Wins)'}
+                  </span>
                 </div>
               </div>
 
               <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex gap-4 items-start">
                 <AlertTriangle className="text-yellow-500 shrink-0" size={20} />
                 <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
-                  Lowering the probability increases the house edge (profit), while raising it makes users win more often. Factory default is <span className="text-white">30%</span>.
+                  {game.id === 'greedy_lion'
+                    ? 'Target Payout Range chooses an exact item inside the min/max payout range. If no item is inside the range, it chooses the closest non-zero item below the minimum and avoids going above the maximum.'
+                    : <>Lowering the probability increases the house edge (profit), while raising it makes users win more often. Factory default is <span className="text-white">30%</span>.</>}
                 </p>
               </div>
 
               <button
                 disabled={saving}
-                onClick={() => updateSetting(game.id, game.win_chance_percent, game.is_active)}
+                onClick={() => game.id === 'greedy_lion' ? saveLimits(game) : updateSetting(game.id, game.win_chance_percent, game.is_active)}
                 className="w-full bg-gradient-to-r from-pink-500 to-purple-600 hover:scale-[1.02] active:scale-[0.98] transition-all text-white font-black py-4 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-pink-500/20 disabled:opacity-50"
               >
                 {saving ? <Loader2 className="animate-spin" size={20} /> : <><Save size={20} /> Save Game Config</>}
@@ -223,7 +402,7 @@ export default function GameControlPage() {
                       value={game.min_bet ?? 10}
                       onChange={(e) => {
                         const v = parseInt(e.target.value) || 0;
-                        setSettings(settings.map((s: any) => s.id === game.id ? { ...s, min_bet: v } : s));
+                        setSettings(settings.map((s) => s.id === game.id ? { ...s, min_bet: v } : s));
                       }}
                     />
                   </div>
@@ -241,7 +420,7 @@ export default function GameControlPage() {
                         // pattern below so admins see both as "empty=no cap".
                         const raw = e.target.value;
                         const v = raw === '' ? null : (parseInt(raw) || 0);
-                        setSettings(settings.map((s: any) => s.id === game.id ? { ...s, max_bet: v } : s));
+                        setSettings(settings.map((s) => s.id === game.id ? { ...s, max_bet: v } : s));
                       }}
                     />
                     <p className="text-[10px] text-gray-600 mt-1">Cumulative bet limit per user per round.</p>
@@ -259,11 +438,172 @@ export default function GameControlPage() {
                     onChange={(e) => {
                       const raw = e.target.value;
                       const v = raw === '' ? null : (parseInt(raw) || 0);
-                      setSettings(settings.map((s: any) => s.id === game.id ? { ...s, daily_loss_cap: v } : s));
+                      setSettings(settings.map((s) => s.id === game.id ? { ...s, daily_loss_cap: v } : s));
                     }}
                   />
-                  <p className="text-[10px] text-gray-600 mt-1">Per-user limit on net losses (diamonds) over 24 hours.</p>
+                  <p className="text-[10px] text-gray-600 mt-1">
+                    Per-user limit on net losses (diamonds) over 24 hours.
+                  </p>
                 </div>
+
+                {game.id === 'greedy_lion' && (
+                  <div className="space-y-4 bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] uppercase text-gray-500 font-bold">Round duration seconds</label>
+                        <input
+                          type="number"
+                          min={5}
+                          className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                          value={game.round_duration_s ?? 30}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value) || 30;
+                            setSettings(settings.map((s) => s.id === game.id ? { ...s, round_duration_s: v } : s));
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] uppercase text-gray-500 font-bold">Result popup seconds</label>
+                        <input
+                          type="number"
+                          min={3}
+                          className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                          value={game.result_display_s ?? 15}
+                          onChange={(e) => {
+                            const v = parseInt(e.target.value) || 15;
+                            setSettings(settings.map((s) => s.id === game.id ? { ...s, result_display_s: v } : s));
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3">
+                      <div>
+                        <label className="text-[10px] uppercase text-gray-500 font-bold">Force next result</label>
+                        <select
+                          className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                          value={game.forced_next_result ?? game.forced_next_category ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value || null;
+                            setSettings(settings.map((s) => s.id === game.id ? { ...s, forced_next_result: v, forced_next_category: ['pizza', 'salad'].includes(v || '') ? v : null } : s));
+                          }}
+                        >
+                          <option value="">Clear</option>
+                          <option value="pizza">Pizza</option>
+                          <option value="salad">Salad</option>
+                          {GREEDY_LION_ITEMS.map((item) => (
+                            <option key={item.id} value={item.id}>{item.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {(['pizza', 'salad'] as const).map((category) => {
+                        const rules = greedyRules(game);
+                        const title = category === 'pizza' ? 'Pizza category' : 'Salad category';
+                        return (
+                          <div key={category} className="bg-[#0E111E] border border-white/10 rounded-xl p-3 space-y-3">
+                            <label className="flex items-center justify-between gap-3">
+                              <span className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{title}</span>
+                              <input
+                                type="checkbox"
+                                checked={Boolean(rules[`${category}_enabled`])}
+                                onChange={(e) => {
+                                  const nextRules = { ...rules, [`${category}_enabled`]: e.target.checked };
+                                  setSettings(settings.map((s) => s.id === game.id ? { ...s, special_result_rules: nextRules } : s));
+                                }}
+                              />
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div>
+                                <label className="text-[10px] uppercase text-gray-500 font-bold">Per hour</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  className="w-full bg-[#080815] border border-white/10 rounded-lg px-2 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                                  value={Number(rules[`${category}_per_hour`] ?? 0)}
+                                  onChange={(e) => {
+                                    const nextRules = { ...rules, [`${category}_per_hour`]: Math.max(0, parseInt(e.target.value) || 0) };
+                                    setSettings(settings.map((s) => s.id === game.id ? { ...s, special_result_rules: nextRules } : s));
+                                  }}
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] uppercase text-gray-500 font-bold">Max / day</label>
+                                <input
+                                  type="number"
+                                  min={0}
+                                  className="w-full bg-[#080815] border border-white/10 rounded-lg px-2 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                                  value={Number(rules[`${category}_max_per_day`] ?? 0)}
+                                  onChange={(e) => {
+                                    const nextRules = { ...rules, [`${category}_max_per_day`]: Math.max(0, parseInt(e.target.value) || 0) };
+                                    setSettings(settings.map((s) => s.id === game.id ? { ...s, special_result_rules: nextRules } : s));
+                                  }}
+                                />
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-gray-600">0 means no scheduled category wins for that limit.</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] uppercase text-gray-500 font-bold">Payout-owner user id</label>
+                      <input
+                        type="text"
+                        placeholder="Example: 202601"
+                        className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-xs font-mono focus:outline-none focus:border-pink-500"
+                        value={game._houseDisplayId ?? houseProfiles[game.house_profile_id || '']?.display_id ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value.trim() || null;
+                          setSettings(settings.map((s) => s.id === game.id ? { ...s, _houseDisplayId: v || '', house_profile_id: null } : s));
+                        }}
+                      />
+                      {game.house_profile_id && houseProfiles[game.house_profile_id] ? (
+                        <p className="text-[10px] text-gray-500 mt-1">
+                          Saving payouts from {houseProfiles[game.house_profile_id]?.full_name || 'selected user'}.
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="bg-[#0E111E] border border-white/10 rounded-xl p-3">
+                      <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Wallet rule</p>
+                      <p className="text-sm text-white font-bold mt-1">Users bet diamonds. Losing bets are burned. Winning payouts subtract diamonds from the selected payout-owner account.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="bg-[#0E111E] border border-white/10 rounded-xl p-3">
+                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Pizza group</p>
+                        <p className="text-sm text-white font-bold mt-1">High payout: 10x, 15x, 25x, 45x</p>
+                      </div>
+                      <div className="bg-[#0E111E] border border-white/10 rounded-xl p-3">
+                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Salad group</p>
+                        <p className="text-sm text-white font-bold mt-1">Low payout: four 5x items</p>
+                      </div>
+                    </div>
+
+                    {game.house_profile_id ? (
+                      <div className={`rounded-xl border p-3 ${Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) <= 0 ? 'bg-red-500/10 border-red-500/30' : Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) < 100000 ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-green-500/10 border-green-500/20'}`}>
+                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Payout-owner diamond balance</p>
+                        <p className="text-xl text-white font-black">
+                          {(houseProfiles[game.house_profile_id]?.diamonds ?? 'Unknown').toLocaleString?.() ?? 'Unknown'} diamonds
+                        </p>
+                        {Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) <= 0 && (
+                          <p className="text-xs text-red-300 font-bold mt-1">Warning: payout-owner balance is negative or empty. Payouts still run, but fund this profile.</p>
+                        )}
+                        {Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) > 0 && Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) < 100000 && (
+                          <p className="text-xs text-yellow-300 font-bold mt-1">Warning: payout-owner balance is low for high-multiplier pizza payouts.</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
+                        <p className="text-xs text-red-300 font-bold">Greedy Lion cannot accept bets until a payout-owner profile id is saved.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div>
                   <label className="text-[10px] uppercase text-gray-500 font-bold">Multipliers (JSON)</label>
@@ -277,13 +617,15 @@ export default function GameControlPage() {
                     }
                     onChange={(e) => {
                       const v = e.target.value;
-                      setSettings(settings.map((s: any) => s.id === game.id ? { ...s, _multipliersText: v } : s));
+                      setSettings(settings.map((s) => s.id === game.id ? { ...s, _multipliersText: v } : s));
                     }}
                   />
                   <p className="text-[10px] text-gray-600 mt-1">
                     {game.id === 'teen_patti'
                       ? 'Format: {"win": 2}'
-                      : 'Format: array of {id, type, m} slots'}
+                      : game.id === 'greedy_lion'
+                        ? 'Format: array of {id, label, category, m} items'
+                        : 'Format: array of {id, type, m} slots'}
                   </p>
                 </div>
 
@@ -302,15 +644,19 @@ export default function GameControlPage() {
         {/* Global Reset Card */}
         <button
           onClick={async () => {
-            if (!window.confirm('Reset every game to win_chance_percent = 30% and re-enable them?\n\nThis is the factory default. Active in-progress rounds are not affected.')) return;
+            if (!window.confirm('Reset classic games to win_chance_percent = 30% and keep Greedy Lion offline until its payout-owner wallet is confirmed?\n\nActive in-progress rounds are not affected.')) return;
             setSaving(true);
-            const { error } = await supabase
+            const classic = await supabase
               .from('game_settings')
               .update({ win_chance_percent: 30, is_active: true })
-              .neq('id', '');
+              .neq('id', 'greedy_lion');
+            const greedy = await supabase
+              .from('game_settings')
+              .update({ win_chance_percent: 60, is_active: false, forced_next_category: null })
+              .eq('id', 'greedy_lion');
             setSaving(false);
-            if (error) {
-              alert('Reset failed: ' + error.message);
+            if (classic.error || greedy.error) {
+              alert('Reset failed: ' + (classic.error?.message || greedy.error?.message));
             } else {
               setSuccess(true);
               setTimeout(() => setSuccess(false), 3000);
@@ -324,7 +670,7 @@ export default function GameControlPage() {
             {saving ? <Loader2 className="text-gray-400 animate-spin" size={32} /> : <RotateCcw className="text-gray-400" size={32} />}
           </div>
           <h3 className="text-xl font-bold text-white mb-2">Reset All Logic</h3>
-          <p className="text-xs text-gray-500 max-w-[200px]">Restore all game probabilities to factory default 30%.</p>
+          <p className="text-xs text-gray-500 max-w-[200px]">Restore defaults without enabling Greedy Lion before house setup.</p>
         </button>
       </div>
     </div>

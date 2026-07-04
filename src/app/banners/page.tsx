@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { optimizeImageFile } from "@/lib/imageOptimizer";
 import {
   Image as ImageIcon, Plus, Trash2, Upload, Loader2, X, Link as LinkIcon,
   CheckCircle2, XCircle, Save, ArrowUp, ArrowDown,
@@ -19,6 +20,7 @@ type Banner = {
 
 const RECOMMENDED_SIZE = "1080 × 500 px";
 const MAX_ACTIVE = 3;
+const MAX_BANNER_UPLOAD_BYTES = 350 * 1024;
 
 export default function BannersPage() {
   const [rows, setRows]         = useState<Banner[]>([]);
@@ -28,16 +30,7 @@ export default function BannersPage() {
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    load();
-    const ch = supabase
-      .channel("admin-home-banners")
-      .on("postgres_changes", { event: "*", schema: "public", table: "home_banners" }, () => load())
-      .subscribe();
-    return () => { try { supabase.removeChannel(ch); } catch (_) {} };
-  }, []);
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from("home_banners")
@@ -46,18 +39,42 @@ export default function BannersPage() {
       .order("created_at", { ascending: false });
     setRows((data as Banner[]) || []);
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(load);
+    const ch = supabase
+      .channel("admin-home-banners")
+      .on("postgres_changes", { event: "*", schema: "public", table: "home_banners" }, () => load())
+      .subscribe();
+    return () => { try { supabase.removeChannel(ch); } catch {} };
+  }, [load]);
 
   const activeCount = rows.filter((r) => r.is_active).length;
 
   async function uploadFile(file: File): Promise<string | null> {
     setUploading(true);
     try {
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+        alert("Only PNG, JPG, or WebP images are accepted.");
+        return null;
+      }
+      const optimized = await optimizeImageFile(file, {
+        maxWidth: 1080,
+        maxHeight: 500,
+        quality: 0.78,
+        outputType: "image/webp",
+        filenamePrefix: file.name,
+      });
+      if (optimized.size > MAX_BANNER_UPLOAD_BYTES) {
+        alert("Banner is still larger than 350 KB after optimization. Please use a simpler or smaller image.");
+        return null;
+      }
+      const safeName = optimized.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const path = `${Date.now()}-${safeName}`;
       const { error } = await supabase.storage
         .from("banners")
-        .upload(path, file, { upsert: false, cacheControl: "3600" });
+        .upload(path, optimized, { upsert: false, cacheControl: "31536000", contentType: optimized.type });
       if (error) {
         alert("Upload failed: " + error.message);
         return null;
@@ -81,6 +98,12 @@ export default function BannersPage() {
   async function save() {
     if (!editing) return;
     if (!editing.image_url) { alert("Please upload a banner image first."); return; }
+    const wouldBeActive = editing.is_active ?? true;
+    const otherActiveCount = rows.filter((r) => r.is_active && r.id !== editing.id).length;
+    if (wouldBeActive && otherActiveCount >= MAX_ACTIVE) {
+      alert(`Only ${MAX_ACTIVE} banners can be active at a time. Disable another first.`);
+      return;
+    }
 
     setSaving(true);
     const payload = {
@@ -165,7 +188,7 @@ export default function BannersPage() {
         <div className="bg-[#1E1A34] border border-[#251B45] rounded-2xl p-12 text-center">
           <ImageIcon className="mx-auto text-gray-600 mb-3" size={48} />
           <p className="text-gray-400 mb-1 font-bold">No banners yet</p>
-          <p className="text-gray-500 text-sm">Tap "New banner" to upload your first one.</p>
+          <p className="text-gray-500 text-sm">Tap New banner to upload your first one.</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -308,7 +331,7 @@ export default function BannersPage() {
                 />
               </div>
               <p className="text-[10px] text-gray-500 text-center -mt-2">
-                Recommended size: <b>{RECOMMENDED_SIZE}</b> · Max 2 MB
+                Recommended size: <b>{RECOMMENDED_SIZE}</b> · optimized to WebP under 350 KB
               </p>
 
               <div>

@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useState, useRef } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
+import { optimizeImageFile } from '@/lib/imageOptimizer';
 import {
   Image as ImageIcon, Plus, Edit2, Trash2, Loader2, X, Upload, Diamond,
   CheckCircle2, ToggleLeft, ToggleRight,
@@ -29,7 +30,7 @@ const emptyTemplate: TemplateRow = {
 };
 
 const BUCKET = 'audio-templates';
-const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 280 * 1024;
 
 export default function AudioTemplatesPage() {
   // Super-admin only. Manager can't tweak monetisation surfaces.
@@ -45,19 +46,7 @@ export default function AudioTemplatesPage() {
   const [editing, setEditing] = useState<TemplateRow | null>(null);
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    if (!isSuperAdmin) return;
-    load();
-    const ch = supabase
-      .channel('admin-audio-templates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'audio_templates' }, () => load())
-      .subscribe();
-    return () => { try { supabase.removeChannel(ch); } catch (_) {} };
-  }, [isSuperAdmin]);
-
-  if (roleLoading || !isSuperAdmin) return null;
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from('audio_templates')
@@ -66,7 +55,19 @@ export default function AudioTemplatesPage() {
       .order('created_at', { ascending: false });
     setRows((data as TemplateRow[]) || []);
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    void Promise.resolve().then(load);
+    const ch = supabase
+      .channel('admin-audio-templates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'audio_templates' }, () => load())
+      .subscribe();
+    return () => { try { supabase.removeChannel(ch); } catch {} };
+  }, [isSuperAdmin, load]);
+
+  if (roleLoading || !isSuperAdmin) return null;
 
   async function toggleActive(t: TemplateRow) {
     const { error } = await supabase
@@ -229,29 +230,36 @@ function EditModal({
     const base = (editing.name || kind).toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-+|-+$/g, '') || kind;
-    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const ext = (file.name.split('.').pop() || 'webp').toLowerCase();
     return `${base}-${kind}-${Date.now()}.${ext}`;
   }
 
   async function uploadFile(file: File, kind: 'bg' | 'pv') {
-    if (file.size > MAX_UPLOAD_BYTES) {
-      alert('File is larger than 3 MB. Try a smaller image or compress it.');
-      return;
-    }
     if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
       alert('Only JPG / PNG / WebP images are accepted.');
+      return;
+    }
+    const optimized = await optimizeImageFile(file, {
+      maxWidth: 1080,
+      maxHeight: 1920,
+      quality: 0.76,
+      outputType: 'image/webp',
+      filenamePrefix: `${editing.name || kind}-${kind}`,
+    });
+    if (optimized.size > MAX_UPLOAD_BYTES) {
+      alert('Image is still larger than 280 KB after optimization. Please use a simpler or smaller image.');
       return;
     }
     const setUploading = kind === 'bg' ? setUploadingBg : setUploadingPv;
     const setUploaded = kind === 'bg' ? setBgUploaded : setPvUploaded;
     setUploading(true);
-    const path = buildFilename(file, kind);
+    const path = buildFilename(optimized, kind);
     const { error } = await supabase.storage
       .from(BUCKET)
-      .upload(path, file, {
-        cacheControl: '3600',
+      .upload(path, optimized, {
+        cacheControl: '31536000',
         upsert: false,
-        contentType: file.type,
+        contentType: optimized.type,
       });
     setUploading(false);
     if (error) {
@@ -390,7 +398,7 @@ function EditModal({
                 {uploadingBg ? (
                   <><Loader2 size={16} className="animate-spin" /> Uploading…</>
                 ) : (
-                  <><Upload size={16} /> Drop or pick a <code className="text-pink-300">.jpg / .png / .webp</code> (max 3 MB)</>
+                  <><Upload size={16} /> Drop or pick a <code className="text-pink-300">.jpg / .png / .webp</code> (optimized)</>
                 )}
               </button>
               <Field label="Background URL" hint="Public Storage URL. Paste manually or use the upload above.">

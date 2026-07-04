@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit2, Image as ImageIcon, Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
@@ -16,6 +16,7 @@ type FrameRow = {
 };
 
 const BUCKET = 'profile-frames';
+const MAX_FRAME_BYTES = 1024 * 1024;
 const BUNDLED_PREVIEWS: Record<string, string> = {
   'bundled://heart-fantasy': '/profile-frames/heart-fantasy.webp',
   'bundled://angel-wing': '/profile-frames/angel-wing.webp',
@@ -41,23 +42,23 @@ export default function ProfileFramesPage() {
     if (!roleLoading && !isSuperAdmin) router.replace('/');
   }, [isSuperAdmin, roleLoading, router]);
 
-  useEffect(() => {
-    if (!isSuperAdmin) return;
-    load();
-    const channel = supabase.channel('admin-profile-frames')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profile_frames' }, load)
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [isSuperAdmin]);
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase.from('profile_frames').select('*')
       .order('display_order').order('created_at');
     if (error) alert(`Could not load frames: ${error.message}`);
     setRows((data as FrameRow[]) || []);
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    void Promise.resolve().then(load);
+    const channel = supabase.channel('admin-profile-frames')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profile_frames' }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [isSuperAdmin, load]);
 
   async function remove(frame: FrameRow) {
     if (!window.confirm(`Delete "${frame.name}"?`)) return;
@@ -150,8 +151,8 @@ function FrameModal({ row, creating, onClose }: { row: FrameRow; creating: boole
       alert('Only WebP files are accepted.');
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Frame must be 5 MB or smaller.');
+    if (file.size > MAX_FRAME_BYTES) {
+      alert('Frame must be 1 MB or smaller. Please compress the animated WebP before uploading.');
       return;
     }
     setUploading(true);
@@ -224,7 +225,7 @@ function FrameModal({ row, creating, onClose }: { row: FrameRow; creating: boole
                 : <span className="text-gray-500 flex flex-col items-center gap-2"><Upload />Upload animated WebP</span>}
             </button>
             <input ref={inputRef} hidden type="file" accept=".webp,image/webp" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-            <p className="text-[10px] text-gray-500 mt-2">Animated WebP only · maximum 5 MB</p>
+            <p className="text-[10px] text-gray-500 mt-2">Animated WebP only · maximum 1 MB</p>
           </div>
         </div>
         <div className="p-5 border-t border-white/5 flex justify-end gap-3">

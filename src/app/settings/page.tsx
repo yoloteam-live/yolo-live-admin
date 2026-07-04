@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Settings, Shield, Save, Loader2, CheckCircle2, AlertTriangle, DollarSign,
@@ -16,6 +16,7 @@ type Settings = {
   games_enabled: boolean;
   maintenance_mode: boolean;
   maintenance_message: string;
+  maintenance_bypass_user_ids: string[];
   // Economy / gameplay tunables — read by RPCs (lucky bag, level system).
   lucky_bag_ttl_seconds: number;
   level_exp_multiplier:  number;
@@ -35,6 +36,7 @@ const DEFAULTS: Settings = {
   games_enabled: true,
   maintenance_mode: false,
   maintenance_message: "We'll be right back.",
+  maintenance_bypass_user_ids: [],
   lucky_bag_ttl_seconds: 60,
   level_exp_multiplier:  1500,
   bulk_diamond_bdt_per_1000: 10,
@@ -55,11 +57,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  useEffect(() => { if (isSuperAdmin) load(); }, [isSuperAdmin]);
-
-  if (roleLoading || !isSuperAdmin) return null;
-
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     const { data, error } = await supabase.from('system_settings').select('key, value');
     if (error) {
@@ -67,22 +65,35 @@ export default function SettingsPage() {
       setLoading(false);
       return;
     }
-    const merged: any = { ...DEFAULTS };
+    const merged: Settings & Record<string, unknown> = { ...DEFAULTS };
     (data || []).forEach((row) => {
       merged[row.key] = row.value;
     });
+    merged.maintenance_bypass_user_ids = normalizeMaintenanceBypassIds(merged.maintenance_bypass_user_ids);
     setSettings(merged);
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    if (!isSuperAdmin) return;
+    void Promise.resolve().then(load);
+  }, [isSuperAdmin, load]);
+
+  if (roleLoading || !isSuperAdmin) return null;
 
   async function save() {
     setSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setSaving(false); return alert('Not signed in'); }
 
+    const updates = {
+      ...settings,
+      maintenance_bypass_user_ids: normalizeMaintenanceBypassIds(settings.maintenance_bypass_user_ids),
+    };
+
     const { data, error } = await supabase.rpc('update_system_settings', {
       p_admin_id: user.id,
-      p_updates: settings,
+      p_updates: updates,
     });
     setSaving(false);
     if (error) return alert('Save failed: ' + error.message);
@@ -192,7 +203,7 @@ export default function SettingsPage() {
         </div>
         <div className="text-xs text-gray-500 mb-5 leading-relaxed">
           All three rates are <b className="text-white">BDT per 1,000 units</b>. The platform-wide spread between bulk and sale is the
-          reseller / agency's gross margin per diamond. Host payout per 1,000 beans is the salary an agency owner pays
+          reseller / agency gross margin per diamond. Host payout per 1,000 beans is the salary an agency owner pays
           their host on settlement.
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -251,6 +262,20 @@ export default function SettingsPage() {
             onChange={(e) => setField('maintenance_message', e.target.value)}
           />
         </div>
+        <div className="mt-4">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-2">
+            Bypass User IDs
+          </label>
+          <textarea
+            className="w-full bg-[#1A1230] border border-[#251B45] rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-pink-500 min-h-[96px]"
+            placeholder="One user UUID or display ID per line"
+            value={settings.maintenance_bypass_user_ids.join('\n')}
+            onChange={(e) => setField('maintenance_bypass_user_ids', normalizeMaintenanceBypassIds(e.target.value))}
+          />
+          <p className="text-[10px] text-gray-600 mt-2">
+            Users listed here will keep using the app while maintenance mode is on. Everyone else sees the maintenance screen.
+          </p>
+        </div>
       </div>
 
       <button
@@ -262,6 +287,15 @@ export default function SettingsPage() {
       </button>
     </div>
   );
+}
+
+function normalizeMaintenanceBypassIds(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : String(value || '').split(/[\n,\s]+/);
+  return Array.from(new Set(
+    raw
+      .map((id) => String(id).trim())
+      .filter(Boolean)
+  ));
 }
 
 function Field({ label, value, onChange, type = 'text', hint }: { label: string; value: string; onChange: (v: string) => void; type?: string; hint?: string }) {
