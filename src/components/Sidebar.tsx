@@ -50,6 +50,11 @@ type NavItem = {
   superOnly?: boolean;
 };
 
+type AdminProfile = {
+  full_name: string;
+  role: string;
+};
+
 const navItems: NavItem[] = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Messages', href: '/messages', icon: MessageSquare, badgeKey: 'unread_dms' },
@@ -66,6 +71,8 @@ const navItems: NavItem[] = [
   { name: 'Audio Templates', href: '/audio-templates', icon: ImageIcon, superOnly: true },
   { name: 'Mall Intros', href: '/mall-intros', icon: Video, superOnly: true },
   { name: 'Profile Frames', href: '/profile-frames', icon: GalleryHorizontal, superOnly: true },
+  { name: 'VIP Subscriptions', href: '/vip-subscriptions', icon: Crown, superOnly: true },
+  { name: 'SVIP Subscriptions', href: '/svip-subscriptions', icon: ShieldCheck, superOnly: true },
   { name: 'VIP Tiers', href: '/vip-tiers', icon: Crown, superOnly: true },
   { name: 'Content & Progression', href: '/content', icon: Sparkles, superOnly: true },
   { name: 'Splash Manager', href: '/splash', icon: ImageIcon },
@@ -100,7 +107,7 @@ export default function Sidebar() {
         .select('full_name, role')
         .eq('id', session.user.id)
         .single();
-      if (mounted && data) setProfile(data as any);
+      if (mounted && data) setProfile(data as AdminProfile);
     })();
     return () => { mounted = false; };
   }, []);
@@ -146,7 +153,7 @@ export default function Sidebar() {
       .subscribe();
     return () => {
       if (timer) clearTimeout(timer);
-      try { supabase.removeChannel(ch); } catch (_) {}
+      try { supabase.removeChannel(ch); } catch {}
     };
   }, [adminId]);
 

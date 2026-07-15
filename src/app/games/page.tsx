@@ -60,7 +60,15 @@ const GREEDY_LION_ITEMS = [
   { id: 'carrot', label: 'Carrot' },
 ];
 
-const DEFAULT_GREEDY_RULES = {
+const TIN_PATTI_PRO_ITEMS = [
+  { id: 'crown', label: 'Crown' },
+  { id: 'coffee', label: 'Coffee' },
+  { id: 'cake', label: 'Cake' },
+];
+
+const GLOBAL_PAYOUT_GAME_IDS = new Set(['greedy_lion', 'tin_patti_pro']);
+
+const DEFAULT_GLOBAL_RULES = {
   pizza_enabled: true,
   pizza_per_hour: 0,
   pizza_max_per_day: 0,
@@ -71,8 +79,17 @@ const DEFAULT_GREEDY_RULES = {
   target_payout_max_percent: 40,
 };
 
-function greedyRules(game: GameSetting) {
-  return { ...DEFAULT_GREEDY_RULES, ...(game.special_result_rules || {}) };
+function isGlobalPayoutGame(id: string) {
+  return GLOBAL_PAYOUT_GAME_IDS.has(id);
+}
+
+function globalRules(game: GameSetting) {
+  return { ...DEFAULT_GLOBAL_RULES, ...(game.special_result_rules || {}) };
+}
+
+function forcedResultItems(gameId: string) {
+  if (gameId === 'tin_patti_pro') return TIN_PATTI_PRO_ITEMS;
+  return GREEDY_LION_ITEMS;
 }
 
 export default function GameControlPage() {
@@ -156,10 +173,10 @@ export default function GameControlPage() {
       alert('Multipliers field must be valid JSON.');
       return;
     }
-    if (game.id === 'greedy_lion' && !game.house_profile_id) {
+    if (isGlobalPayoutGame(game.id) && !game.house_profile_id) {
       const displayId = String(game._houseDisplayId ?? '').trim();
       if (!displayId) {
-        alert('Greedy Lion needs a payout-owner user id before saving.');
+        alert(`${gameDisplayName(game.id)} needs a payout-owner user id before saving.`);
         return;
       }
       const parsedDisplayId = Number(displayId);
@@ -179,10 +196,10 @@ export default function GameControlPage() {
       game.house_profile_id = owner.id;
       setHouseProfiles((current) => ({ ...current, [owner.id]: owner as HouseProfile }));
     }
-    if (game.id === 'greedy_lion') {
+    if (isGlobalPayoutGame(game.id)) {
       const duration = Number(game.round_duration_s ?? 30);
       const display = Number(game.result_display_s ?? 15);
-      const rules = greedyRules(game);
+      const rules = globalRules(game);
       const minPayout = Number(rules.target_payout_min_percent ?? 30);
       const maxPayout = Number(rules.target_payout_max_percent ?? 40);
       if (!duration || duration < 5) {
@@ -194,7 +211,7 @@ export default function GameControlPage() {
         return;
       }
       if (minPayout < 0 || maxPayout < minPayout) {
-        alert('Greedy Lion payout range must be 0 or higher, and max must be greater than or equal to min.');
+        alert(`${gameDisplayName(game.id)} payout range must be 0 or higher, and max must be greater than or equal to min.`);
         return;
       }
     }
@@ -208,13 +225,13 @@ export default function GameControlPage() {
       daily_loss_cap: game.daily_loss_cap || null,
       multipliers:    parsedMultipliers,
     };
-    if (game.id === 'greedy_lion') {
+    if (isGlobalPayoutGame(game.id)) {
       patch.round_duration_s = Number(game.round_duration_s ?? 30);
       patch.result_display_s = Number(game.result_display_s ?? 15);
       patch.house_profile_id = game.house_profile_id;
-      patch.forced_next_category = ['pizza', 'salad'].includes(game.forced_next_result || '') ? game.forced_next_result : null;
+      patch.forced_next_category = game.id === 'greedy_lion' && ['pizza', 'salad'].includes(game.forced_next_result || '') ? game.forced_next_result : null;
       patch.forced_next_result = game.forced_next_result || null;
-      patch.special_result_rules = greedyRules(game);
+      patch.special_result_rules = globalRules(game);
     }
     setSaving(true);
     const { error } = await supabase
@@ -230,6 +247,7 @@ export default function GameControlPage() {
 
   function gameDisplayName(id: string) {
     if (id === 'greedy_lion') return 'Greedy Lion';
+    if (id === 'tin_patti_pro') return 'Tin Patti Pro';
     if (id === 'royal_feast') return 'Royal Feast';
     return id.replaceAll('_', ' ');
   }
@@ -303,16 +321,16 @@ export default function GameControlPage() {
                 <div className="flex items-center justify-between mb-4">
                   <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
                     <Settings2 size={14} className="text-pink-500" />
-                    {game.id === 'greedy_lion' ? 'Target Payout Range' : 'Win Probability (RTP)'}
+                    {isGlobalPayoutGame(game.id) ? 'Target Payout Range' : 'Win Probability (RTP)'}
                   </label>
                   <span className="text-2xl font-black text-pink-500">
-                    {game.id === 'greedy_lion'
-                      ? `${greedyRules(game).target_payout_min_percent}-${greedyRules(game).target_payout_max_percent}%`
+                    {isGlobalPayoutGame(game.id)
+                      ? `${globalRules(game).target_payout_min_percent}-${globalRules(game).target_payout_max_percent}%`
                       : `${game.win_chance_percent}%`}
                   </span>
                 </div>
                 
-                {game.id === 'greedy_lion' ? (
+                {isGlobalPayoutGame(game.id) ? (
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="text-[10px] uppercase text-gray-500 font-bold">Minimum payout %</label>
@@ -320,9 +338,9 @@ export default function GameControlPage() {
                         type="number"
                         min={0}
                         className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
-                        value={Number(greedyRules(game).target_payout_min_percent ?? 30)}
+                        value={Number(globalRules(game).target_payout_min_percent ?? 30)}
                         onChange={(e) => {
-                          const rules = greedyRules(game);
+                          const rules = globalRules(game);
                           const min = Math.max(0, parseInt(e.target.value) || 0);
                           const max = Math.max(min, Number(rules.target_payout_max_percent ?? min));
                           const nextRules = { ...rules, target_payout_min_percent: min, target_payout_max_percent: max };
@@ -336,9 +354,9 @@ export default function GameControlPage() {
                         type="number"
                         min={0}
                         className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
-                        value={Number(greedyRules(game).target_payout_max_percent ?? 40)}
+                        value={Number(globalRules(game).target_payout_max_percent ?? 40)}
                         onChange={(e) => {
-                          const rules = greedyRules(game);
+                          const rules = globalRules(game);
                           const min = Number(rules.target_payout_min_percent ?? 0);
                           const max = Math.max(min, parseInt(e.target.value) || 0);
                           const nextRules = { ...rules, target_payout_max_percent: max };
@@ -363,10 +381,10 @@ export default function GameControlPage() {
                 
                 <div className="flex justify-between mt-4">
                   <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">
-                    {game.id === 'greedy_lion' ? 'Lower Payout' : 'Greedy (Admin Wins)'}
+                    {isGlobalPayoutGame(game.id) ? 'Lower Payout' : 'Greedy (Admin Wins)'}
                   </span>
                   <span className="text-[10px] font-bold text-green-500 uppercase tracking-widest">
-                    {game.id === 'greedy_lion' ? 'Higher Payout' : 'Giving (User Wins)'}
+                    {isGlobalPayoutGame(game.id) ? 'Higher Payout' : 'Giving (User Wins)'}
                   </span>
                 </div>
               </div>
@@ -374,7 +392,7 @@ export default function GameControlPage() {
               <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex gap-4 items-start">
                 <AlertTriangle className="text-yellow-500 shrink-0" size={20} />
                 <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
-                  {game.id === 'greedy_lion'
+                  {isGlobalPayoutGame(game.id)
                     ? 'Target Payout Range chooses an exact item inside the min/max payout range. If no item is inside the range, it chooses the closest non-zero item below the minimum and avoids going above the maximum.'
                     : <>Lowering the probability increases the house edge (profit), while raising it makes users win more often. Factory default is <span className="text-white">30%</span>.</>}
                 </p>
@@ -382,7 +400,7 @@ export default function GameControlPage() {
 
               <button
                 disabled={saving}
-                onClick={() => game.id === 'greedy_lion' ? saveLimits(game) : updateSetting(game.id, game.win_chance_percent, game.is_active)}
+                onClick={() => isGlobalPayoutGame(game.id) ? saveLimits(game) : updateSetting(game.id, game.win_chance_percent, game.is_active)}
                 className="w-full bg-gradient-to-r from-pink-500 to-purple-600 hover:scale-[1.02] active:scale-[0.98] transition-all text-white font-black py-4 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-pink-500/20 disabled:opacity-50"
               >
                 {saving ? <Loader2 className="animate-spin" size={20} /> : <><Save size={20} /> Save Game Config</>}
@@ -446,7 +464,7 @@ export default function GameControlPage() {
                   </p>
                 </div>
 
-                {game.id === 'greedy_lion' && (
+                {isGlobalPayoutGame(game.id) && (
                   <div className="space-y-4 bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -489,18 +507,19 @@ export default function GameControlPage() {
                           }}
                         >
                           <option value="">Clear</option>
-                          <option value="pizza">Pizza</option>
-                          <option value="salad">Salad</option>
-                          {GREEDY_LION_ITEMS.map((item) => (
+                          {game.id === 'greedy_lion' && <option value="pizza">Pizza</option>}
+                          {game.id === 'greedy_lion' && <option value="salad">Salad</option>}
+                          {forcedResultItems(game.id).map((item) => (
                             <option key={item.id} value={item.id}>{item.label}</option>
                           ))}
                         </select>
                       </div>
                     </div>
 
+                    {game.id === 'greedy_lion' && (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {(['pizza', 'salad'] as const).map((category) => {
-                        const rules = greedyRules(game);
+                        const rules = globalRules(game);
                         const title = category === 'pizza' ? 'Pizza category' : 'Salad category';
                         return (
                           <div key={category} className="bg-[#0E111E] border border-white/10 rounded-xl p-3 space-y-3">
@@ -548,6 +567,7 @@ export default function GameControlPage() {
                         );
                       })}
                     </div>
+                    )}
 
                     <div>
                       <label className="text-[10px] uppercase text-gray-500 font-bold">Payout-owner user id</label>
@@ -573,6 +593,7 @@ export default function GameControlPage() {
                       <p className="text-sm text-white font-bold mt-1">Users bet diamonds. Losing bets are burned. Winning payouts subtract diamonds from the selected payout-owner account.</p>
                     </div>
 
+                    {game.id === 'greedy_lion' ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="bg-[#0E111E] border border-white/10 rounded-xl p-3">
                         <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">Pizza group</p>
@@ -583,6 +604,16 @@ export default function GameControlPage() {
                         <p className="text-sm text-white font-bold mt-1">Low payout: four 5x items</p>
                       </div>
                     </div>
+                    ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      {TIN_PATTI_PRO_ITEMS.map((item) => (
+                        <div key={item.id} className="bg-[#0E111E] border border-white/10 rounded-xl p-3">
+                          <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{item.label}</p>
+                          <p className="text-sm text-white font-bold mt-1">Card board result</p>
+                        </div>
+                      ))}
+                    </div>
+                    )}
 
                     {game.house_profile_id ? (
                       <div className={`rounded-xl border p-3 ${Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) <= 0 ? 'bg-red-500/10 border-red-500/30' : Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) < 100000 ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-green-500/10 border-green-500/20'}`}>
@@ -599,7 +630,7 @@ export default function GameControlPage() {
                       </div>
                     ) : (
                       <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
-                        <p className="text-xs text-red-300 font-bold">Greedy Lion cannot accept bets until a payout-owner profile id is saved.</p>
+                        <p className="text-xs text-red-300 font-bold">{gameDisplayName(game.id)} cannot accept bets until a payout-owner profile id is saved.</p>
                       </div>
                     )}
                   </div>
@@ -625,6 +656,8 @@ export default function GameControlPage() {
                       ? 'Format: {"win": 2}'
                       : game.id === 'greedy_lion'
                         ? 'Format: array of {id, label, category, m} items'
+                        : game.id === 'tin_patti_pro'
+                          ? 'Format: array of {id, label, m} boards'
                         : 'Format: array of {id, type, m} slots'}
                   </p>
                 </div>
@@ -644,19 +677,19 @@ export default function GameControlPage() {
         {/* Global Reset Card */}
         <button
           onClick={async () => {
-            if (!window.confirm('Reset classic games to win_chance_percent = 30% and keep Greedy Lion offline until its payout-owner wallet is confirmed?\n\nActive in-progress rounds are not affected.')) return;
+            if (!window.confirm('Reset classic games to win_chance_percent = 30% and keep global payout games offline until payout-owner wallets are confirmed?\n\nActive in-progress rounds are not affected.')) return;
             setSaving(true);
             const classic = await supabase
               .from('game_settings')
               .update({ win_chance_percent: 30, is_active: true })
-              .neq('id', 'greedy_lion');
-            const greedy = await supabase
+              .not('id', 'in', '(greedy_lion,tin_patti_pro)');
+            const globalPayoutGames = await supabase
               .from('game_settings')
-              .update({ win_chance_percent: 60, is_active: false, forced_next_category: null })
-              .eq('id', 'greedy_lion');
+              .update({ win_chance_percent: 60, is_active: false, forced_next_category: null, forced_next_result: null })
+              .in('id', ['greedy_lion', 'tin_patti_pro']);
             setSaving(false);
-            if (classic.error || greedy.error) {
-              alert('Reset failed: ' + (classic.error?.message || greedy.error?.message));
+            if (classic.error || globalPayoutGames.error) {
+              alert('Reset failed: ' + (classic.error?.message || globalPayoutGames.error?.message));
             } else {
               setSuccess(true);
               setTimeout(() => setSuccess(false), 3000);
@@ -670,7 +703,7 @@ export default function GameControlPage() {
             {saving ? <Loader2 className="text-gray-400 animate-spin" size={32} /> : <RotateCcw className="text-gray-400" size={32} />}
           </div>
           <h3 className="text-xl font-bold text-white mb-2">Reset All Logic</h3>
-          <p className="text-xs text-gray-500 max-w-[200px]">Restore defaults without enabling Greedy Lion before house setup.</p>
+          <p className="text-xs text-gray-500 max-w-[200px]">Restore defaults without enabling global payout games before house setup.</p>
         </button>
       </div>
     </div>
