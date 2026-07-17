@@ -3,14 +3,24 @@ import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import type { Session } from '@supabase/supabase-js';
+import { AdminAccess, AdminAccessProvider, DashboardRole } from '@/lib/adminAccess';
+import { ADMIN_MODULES, moduleForPath, hasPermission } from '@/lib/adminModules';
 
-type AdminProfile = { id: string; full_name: string; role: string };
+type AccessRpc = {
+  success?: boolean;
+  profile_id?: string;
+  full_name?: string;
+  role?: DashboardRole;
+  permissions?: Record<string, 'view' | 'manage'>;
+  is_active?: boolean;
+};
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [checking, setChecking] = useState(true);
-  const [profile, setProfile] = useState<AdminProfile | null>(null);
+  const [access, setAccess] = useState<AdminAccess | null>(null);
 
   const isLoginPage = pathname === '/login';
 
@@ -18,7 +28,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     let mounted = true;
 
     async function check() {
-      let session: any = null;
+      let session: Session | null = null;
       try {
         const res = await supabase.auth.getSession();
         if (res.error) {
@@ -28,41 +38,70 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           }
         }
         session = res.data?.session ?? null;
-      } catch (e: any) {
-        if (e?.message?.toLowerCase().includes('refresh token')) {
+      } catch (error: unknown) {
+        if (error instanceof Error && error.message.toLowerCase().includes('refresh token')) {
           await supabase.auth.signOut().catch(() => {});
         }
       }
 
       if (!session) {
         if (mounted) {
-          setProfile(null);
+          setAccess(null);
           setChecking(false);
           if (!isLoginPage) router.replace('/login');
         }
         return;
       }
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, full_name, role')
-        .eq('id', session.user.id)
-        .single();
+      const { data, error } = await supabase.rpc('get_my_admin_access');
+      let rpc = data as AccessRpc | null;
 
-      if (error || !data || !['admin', 'super_admin', 'manager'].includes(data.role)) {
+      // Keeps an existing super admin usable during the migration rollout.
+      if (error) {
+        const legacy = await supabase.from('profiles').select('id, full_name, role').eq('id', session.user.id).single();
+        if (legacy.data && ['super_admin', 'admin'].includes(legacy.data.role)) {
+          rpc = {
+            success: true,
+            profile_id: legacy.data.id,
+            full_name: legacy.data.full_name,
+            role: 'super_admin',
+            permissions: {},
+            is_active: true,
+          };
+        }
+      }
+
+      if (!rpc?.success || !rpc.profile_id || !rpc.role || rpc.is_active === false) {
         await supabase.auth.signOut().catch(() => {});
         if (mounted) {
-          setProfile(null);
+          setAccess(null);
           setChecking(false);
           if (!isLoginPage) router.replace('/login');
         }
         return;
       }
 
+      const nextAccess: AdminAccess = {
+        id: rpc.profile_id,
+        fullName: rpc.full_name || 'Admin',
+        role: rpc.role,
+        permissions: rpc.permissions || {},
+        isActive: true,
+      };
+
       if (mounted) {
-        setProfile(data as AdminProfile);
+        setAccess(nextAccess);
         setChecking(false);
-        if (isLoginPage) router.replace('/');
+        if (isLoginPage) {
+          const first = ADMIN_MODULES.find((module) => hasPermission(nextAccess.role, nextAccess.permissions, module.key));
+          router.replace(first?.href || '/');
+        } else {
+          const currentModule = moduleForPath(pathname);
+          if (currentModule && !hasPermission(nextAccess.role, nextAccess.permissions, currentModule.key)) {
+            const first = ADMIN_MODULES.find((module) => hasPermission(nextAccess.role, nextAccess.permissions, module.key));
+            router.replace(first?.href || '/login');
+          }
+        }
       }
     }
 
@@ -96,16 +135,17 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             'postgres_changes',
             { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${u.id}` },
             (payload) => {
-              const r = (payload.new as any)?.role;
-              const banned = (payload.new as any)?.is_banned;
-              if (banned || !['admin', 'super_admin', 'manager'].includes(r)) {
+              const nextProfile = payload.new as { role?: string; is_banned?: boolean };
+              const r = nextProfile.role;
+              const banned = nextProfile.is_banned;
+              if (banned || !['admin', 'super_admin', 'manager', 'moderator', 'agency_owner'].includes(r || '')) {
                 supabase.auth.signOut().catch(() => {});
                 router.replace('/login');
               }
             }
           )
           .subscribe();
-      } catch (_) {
+      } catch {
         // Non-fatal; on next check() the stale role will be caught.
       }
     })();
@@ -113,7 +153,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
       subscription.unsubscribe();
-      if (roleSub) { try { roleSub.unsubscribe(); } catch (_) {} }
+      if (roleSub) { try { roleSub.unsubscribe(); } catch {} }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
@@ -134,9 +174,9 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!profile) {
+  if (!access) {
     return null; // redirecting
   }
 
-  return <>{children}</>;
+  return <AdminAccessProvider value={access}>{children}</AdminAccessProvider>;
 }

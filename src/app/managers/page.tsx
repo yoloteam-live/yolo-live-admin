@@ -1,288 +1,214 @@
 "use client";
-import { useEffect, useState, useCallback } from 'react';
-import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Loader2, Plus, Save, ShieldCheck, UserCog } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
-import { useAdminRole } from '@/lib/useAdminRole';
-import {
-  UserCog, Search, Loader2, UserMinus, UserPlus, ScrollText, ShieldCheck,
-} from 'lucide-react';
+import { useAdminAccess } from '@/lib/adminAccess';
+import { ADMIN_MODULES, AdminPermissions, PermissionLevel } from '@/lib/adminModules';
 
-type ManagerRow = {
-  id: string;
-  full_name: string | null;
-  display_id: number | null;
-  avatar_url: string | null;
-  created_at: string;
-};
-
-type SearchHit = {
-  id: string;
-  full_name: string | null;
-  display_id: number | null;
+type StaffAccount = {
+  profile_id: string;
   role: string;
+  permissions: AdminPermissions;
+  email: string | null;
+  phone: string | null;
+  is_active: boolean;
+  created_at: string;
+  profiles: { full_name?: string } | { full_name?: string }[] | null;
 };
 
-export default function ManagersPage() {
-  // Super-admin only — managers managing managers would be a permission
-  // loop. The migration's promote_to_manager RPC enforces this too.
-  const router = useRouter();
-  const { isSuperAdmin, loading: roleLoading } = useAdminRole();
-  useEffect(() => {
-    if (!roleLoading && !isSuperAdmin) router.replace('/');
-  }, [isSuperAdmin, roleLoading, router]);
+function profileName(account: StaffAccount) {
+  const profile = Array.isArray(account.profiles) ? account.profiles[0] : account.profiles;
+  return profile?.full_name || account.email || account.phone || 'Staff account';
+}
 
-  const [managers, setManagers] = useState<ManagerRow[]>([]);
+export default function StaffAccountsPage() {
+  const { access } = useAdminAccess();
+  const [accounts, setAccounts] = useState<StaffAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [searching, setSearching] = useState(false);
-  const [hits, setHits] = useState<SearchHit[]>([]);
-  const [actingOn, setActingOn] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole] = useState('manager');
+  const [permissions, setPermissions] = useState<AdminPermissions>({});
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingPermissions, setEditingPermissions] = useState<AdminPermissions>({});
 
-  const loadManagers = useCallback(async () => {
+  const roleOptions = useMemo(() => access?.role === 'super_admin'
+    ? ['admin', 'manager', 'moderator', 'agency_owner']
+    : ['manager', 'moderator'], [access?.role]);
+
+  const token = useCallback(async () => (await supabase.auth.getSession()).data.session?.access_token, []);
+  const load = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, full_name, display_id, avatar_url, created_at')
-      .eq('role', 'manager')
-      .order('created_at', { ascending: false });
-    if (error) {
-      console.warn('managers load:', error.message);
-      setManagers([]);
-    } else {
-      setManagers((data as ManagerRow[]) || []);
-    }
-    setLoading(false);
-  }, []);
+    setError('');
+    try {
+      const accessToken = await token();
+      const response = await fetch('/api/admin/accounts', { headers: { Authorization: `Bearer ${accessToken}` } });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not load staff accounts.');
+      setAccounts(payload.accounts || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load staff accounts.');
+    } finally { setLoading(false); }
+  }, [token]);
 
   useEffect(() => {
-    if (!isSuperAdmin) return;
-    loadManagers();
-  }, [isSuperAdmin, loadManagers]);
+    // Network-backed initial hydration.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    load();
+  }, [load]);
 
-  // Lightweight debounced search — looks up plain users / hosts (not
-  // already-managers / agencies / super_admins) so the owner can pick
-  // one to promote without scrolling the whole users table.
-  useEffect(() => {
-    if (!isSuperAdmin) return;
-    const term = search.trim();
-    if (term.length < 2) { setHits([]); return; }
-    setSearching(true);
-    const handle = setTimeout(async () => {
-      let q = supabase
-        .from('profiles')
-        .select('id, full_name, display_id, role')
-        .in('role', ['user', 'host'])
-        .limit(20);
-      // Numeric search → display_id, otherwise → full_name ilike.
-      const asNum = Number(term);
-      if (Number.isInteger(asNum) && asNum > 0) {
-        q = q.eq('display_id', asNum);
-      } else {
-        q = q.ilike('full_name', `%${term}%`);
-      }
-      const { data, error } = await q;
-      if (error) console.warn('manager-search:', error.message);
-      setHits((data as SearchHit[]) || []);
-      setSearching(false);
-    }, 300);
-    return () => clearTimeout(handle);
-  }, [search, isSuperAdmin]);
-
-  async function promote(target: SearchHit) {
-    if (actingOn) return;
-    const ok = window.confirm(
-      `Promote ${target.full_name || target.id} to manager?\n\n` +
-      `They will gain access to the admin panel with restricted permissions.`
-    );
-    if (!ok) return;
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { alert('Not signed in'); return; }
-
-    setActingOn(target.id);
-    const { data, error } = await supabase.rpc('promote_to_manager', {
-      p_target: target.id,
-      p_admin:  user.id,
+  function setPermission(key: string, level: PermissionLevel | 'none') {
+    setPermissions((current) => {
+      const next = { ...current };
+      if (level === 'none') delete next[key]; else next[key] = level;
+      return next;
     });
-    setActingOn(null);
-    if (error) { alert('Error: ' + error.message); return; }
-    if (!data?.success) { alert(data?.message || 'Failed'); return; }
-
-    setSearch('');
-    setHits([]);
-    await loadManagers();
   }
 
-  async function demote(m: ManagerRow) {
-    if (actingOn) return;
-    const ok = window.confirm(
-      `Demote ${m.full_name || m.id} back to a normal user?\n\n` +
-      `They will lose access to the admin panel immediately.`
-    );
-    if (!ok) return;
-
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { alert('Not signed in'); return; }
-
-    setActingOn(m.id);
-    const { data, error } = await supabase.rpc('demote_from_manager', {
-      p_target: m.id,
-      p_admin:  user.id,
-    });
-    setActingOn(null);
-    if (error) { alert('Error: ' + error.message); return; }
-    if (!data?.success) { alert(data?.message || 'Failed'); return; }
-
-    await loadManagers();
+  async function createAccount(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true); setError('');
+    try {
+      const accessToken = await token();
+      const response = await fetch('/api/admin/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ fullName, identifier, password, role, permissions }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not create account.');
+      setFullName(''); setIdentifier(''); setPassword(''); setPermissions({});
+      await load();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not create account.'); }
+    finally { setSaving(false); }
   }
 
-  if (roleLoading || !isSuperAdmin) return null;
+  async function updateAccount(account: StaffAccount, patch: Record<string, unknown>) {
+    setSaving(true); setError('');
+    try {
+      const accessToken = await token();
+      const response = await fetch('/api/admin/accounts', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ profileId: account.profile_id, ...patch }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Could not update account.');
+      await load();
+    } catch (err) { setError(err instanceof Error ? err.message : 'Could not update account.'); }
+    finally { setSaving(false); }
+  }
 
   return (
     <div className="space-y-8">
       <div>
         <div className="flex items-center gap-3">
-          <h2 className="text-3xl font-black text-white">Managers</h2>
-          <span className="flex items-center gap-1 text-[10px] font-bold text-rose-300 bg-rose-500/15 px-2 py-1 rounded-full border border-rose-500/30">
-            <ShieldCheck size={10} /> Super Admin Only
+          <h2 className="text-3xl font-black text-white">Staff Accounts</h2>
+          <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-300 bg-emerald-500/10 px-2 py-1 rounded-full border border-emerald-500/30">
+            <ShieldCheck size={11} /> Permission controlled
           </span>
         </div>
-        <p className="text-gray-500 mt-1">
-          Managers can handle top-ups, applications and DMs but can't move money,
-          change roles, or edit the catalogue.
-        </p>
+        <p className="text-gray-500 mt-1">Create dashboard credentials and grant only the modules each person needs.</p>
       </div>
 
-      {/* Promote section */}
-      <div className="glass-card p-6">
-        <h3 className="text-lg font-black text-white mb-4 flex items-center gap-2">
-          <UserPlus size={18} className="text-emerald-400" />
-          Promote a user to manager
-        </h3>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
-          <input
-            type="text"
-            placeholder="Search by display ID or full name…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full bg-[#0E111E] border border-[#251B45] rounded-xl pl-10 pr-4 py-3 text-white text-sm focus:outline-none focus:border-emerald-500"
-          />
+      {error && <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-300">{error}</div>}
+
+      <form onSubmit={createAccount} className="glass-card p-6 space-y-6">
+        <h3 className="text-lg font-black text-white flex items-center gap-2"><Plus size={18} /> Create account</h3>
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <input required value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Full name" className="bg-[#0E111E] border border-[#251B45] rounded-xl px-4 py-3 text-white text-sm" />
+          <input required value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder="Email or phone" className="bg-[#0E111E] border border-[#251B45] rounded-xl px-4 py-3 text-white text-sm" />
+          <input required minLength={8} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Password (8+ characters)" className="bg-[#0E111E] border border-[#251B45] rounded-xl px-4 py-3 text-white text-sm" />
+          <select value={role} onChange={(e) => setRole(e.target.value)} className="bg-[#0E111E] border border-[#251B45] rounded-xl px-4 py-3 text-white text-sm capitalize">
+            {roleOptions.map((option) => <option key={option} value={option}>{option.replace('_', ' ')}</option>)}
+          </select>
         </div>
 
-        {search.trim().length >= 2 && (
-          <div className="mt-3 border border-[#251B45] rounded-xl divide-y divide-[#251B45] bg-[#0E111E] overflow-hidden">
-            {searching ? (
-              <div className="p-4 flex items-center gap-2 text-gray-500 text-sm">
-                <Loader2 className="animate-spin" size={14} /> Searching…
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-black text-white">Module access</h4>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setPermissions(Object.fromEntries(ADMIN_MODULES.map((m) => [m.key, 'manage'])))} className="text-xs text-pink-300 hover:text-pink-200">Select all</button>
+              <button type="button" onClick={() => setPermissions({})} className="text-xs text-gray-500 hover:text-white">Clear</button>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2">
+            {ADMIN_MODULES.map((module) => (
+              <div key={module.key} className="flex items-center justify-between rounded-lg bg-black/20 border border-white/5 px-3 py-2">
+                <span className="text-xs text-gray-300">{module.name}</span>
+                <select value={permissions[module.key] || 'none'} onChange={(e) => setPermission(module.key, e.target.value as PermissionLevel | 'none')} className="bg-[#151225] rounded-md px-2 py-1 text-[11px] text-white border border-white/10">
+                  <option value="none">No access</option><option value="manage">Access</option>
+                </select>
               </div>
-            ) : hits.length === 0 ? (
-              <div className="p-4 text-gray-500 text-sm">No matches.</div>
-            ) : (
-              hits.map((h) => (
-                <div key={h.id} className="flex items-center justify-between p-3 hover:bg-white/[0.03]">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-full bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center font-bold text-emerald-300">
-                      {(h.full_name?.[0] || 'U').toUpperCase()}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="font-bold text-white truncate">{h.full_name || 'Unknown'}</p>
-                      <p className="text-[10px] text-gray-500 font-mono">
-                        ID {h.display_id ?? '—'} · {h.role}
-                      </p>
-                    </div>
+            ))}
+          </div>
+        </div>
+        <button disabled={saving} className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-pink-500 to-purple-600 px-5 py-3 font-black text-white disabled:opacity-50">
+          {saving ? <Loader2 className="animate-spin" size={17} /> : <UserCog size={17} />} Create staff account
+        </button>
+      </form>
+
+      <div className="glass-card overflow-hidden">
+        <div className="p-6 border-b border-white/5"><h3 className="font-black text-white">Existing accounts</h3></div>
+        {loading ? <div className="p-12 text-center"><Loader2 className="animate-spin inline text-pink-400" /></div> : (
+          <div className="divide-y divide-white/5">
+            {accounts.map((account) => (
+              <div key={account.profile_id} className="p-5 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-white">{profileName(account)}</p>
+                    <p className="text-xs text-gray-500">{account.email || account.phone} · <span className="capitalize">{account.role.replace('_', ' ')}</span> · {Object.keys(account.permissions || {}).length} modules</p>
                   </div>
-                  <button
-                    onClick={() => promote(h)}
-                    disabled={actingOn === h.id}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/25 disabled:opacity-50"
-                  >
-                    {actingOn === h.id ? <Loader2 size={12} className="animate-spin" /> : <UserPlus size={12} />}
-                    Promote
-                  </button>
+                  <span className={account.is_active ? 'text-xs font-bold text-emerald-300' : 'text-xs font-bold text-red-300'}>{account.is_active ? 'ACTIVE' : 'DISABLED'}</span>
+                  {account.role !== 'super_admin' && (
+                    <>
+                      <button disabled={saving} onClick={() => {
+                        const next = window.prompt('New password (8+ characters). Leave blank to cancel.');
+                        if (next) updateAccount(account, { password: next });
+                      }} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-300 hover:text-white">Reset password</button>
+                      <button disabled={saving} onClick={() => updateAccount(account, { isActive: !account.is_active })} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-300 hover:text-white">
+                        {account.is_active ? 'Disable' : 'Enable'}
+                      </button>
+                      <button disabled={saving} onClick={() => {
+                        if (editingId === account.profile_id) { setEditingId(null); return; }
+                        setEditingId(account.profile_id);
+                        setEditingPermissions({ ...(account.permissions || {}) });
+                      }} className="rounded-lg border border-pink-500/30 bg-pink-500/10 px-3 py-2 text-xs text-pink-300">Edit access</button>
+                    </>
+                  )}
                 </div>
-              ))
-            )}
+                {editingId === account.profile_id && (
+                  <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                    <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2">
+                      {ADMIN_MODULES.map((adminModule) => (
+                        <div key={adminModule.key} className="flex items-center justify-between rounded-lg bg-[#151225] px-3 py-2">
+                          <span className="text-xs text-gray-300">{adminModule.name}</span>
+                          <select value={editingPermissions[adminModule.key] || 'none'} onChange={(event) => setEditingPermissions((current) => {
+                            const next = { ...current };
+                            const level = event.target.value as PermissionLevel | 'none';
+                            if (level === 'none') delete next[adminModule.key]; else next[adminModule.key] = level;
+                            return next;
+                          })} className="bg-[#0E111E] rounded-md px-2 py-1 text-[11px] text-white border border-white/10">
+                            <option value="none">No access</option><option value="manage">Access</option>
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                    <button disabled={saving} onClick={async () => {
+                      await updateAccount(account, { permissions: editingPermissions });
+                      setEditingId(null);
+                    }} className="mt-4 rounded-lg bg-pink-500 px-4 py-2 text-xs font-black text-white flex items-center gap-2"><Save size={12} /> Save access</button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {!accounts.length && <div className="p-10 text-center text-gray-500">No staff accounts found.</div>}
           </div>
         )}
-      </div>
-
-      {/* Current managers */}
-      <div className="glass-card overflow-hidden">
-        <div className="p-6 border-b border-white/5 flex items-center justify-between">
-          <h3 className="text-lg font-black text-white flex items-center gap-2">
-            <UserCog size={18} className="text-amber-300" />
-            Current managers
-            <span className="text-xs text-gray-500 font-normal">
-              ({managers.length})
-            </span>
-          </h3>
-        </div>
-        <table className="w-full text-left">
-          <thead>
-            <tr className="bg-white/5 text-gray-500 text-xs uppercase tracking-widest">
-              <th className="px-6 py-4 font-black">Manager</th>
-              <th className="px-6 py-4 font-black">Display ID</th>
-              <th className="px-6 py-4 font-black">Promoted</th>
-              <th className="px-6 py-4 font-black text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="text-sm">
-            {loading ? (
-              <tr>
-                <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
-                  <Loader2 className="animate-spin inline-block" size={20} />
-                </td>
-              </tr>
-            ) : managers.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-6 py-12 text-center text-gray-500">
-                  No managers yet — promote one using the search above.
-                </td>
-              </tr>
-            ) : (
-              managers.map((m) => (
-                <tr key={m.id} className="border-b border-white/5 hover:bg-white/[0.02]">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center font-bold text-amber-300 overflow-hidden">
-                        {m.avatar_url
-                          ? <img src={m.avatar_url} alt="" className="w-full h-full object-cover" />
-                          : (m.full_name?.[0]?.toUpperCase() || 'M')}
-                      </div>
-                      <p className="font-bold text-white">{m.full_name || 'Unknown'}</p>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-gray-300 font-mono text-xs">
-                    {m.display_id ?? '—'}
-                  </td>
-                  <td className="px-6 py-4 text-gray-400 text-xs">
-                    {new Date(m.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="inline-flex gap-2">
-                      <Link
-                        href={`/managers/${m.id}/audit`}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-xs font-bold transition"
-                      >
-                        <ScrollText size={12} /> View activity
-                      </Link>
-                      <button
-                        onClick={() => demote(m)}
-                        disabled={actingOn === m.id}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-500/15 text-orange-300 border border-orange-500/30 text-xs font-bold hover:bg-orange-500/25 disabled:opacity-50"
-                      >
-                        {actingOn === m.id ? <Loader2 size={12} className="animate-spin" /> : <UserMinus size={12} />}
-                        Demote
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
       </div>
     </div>
   );

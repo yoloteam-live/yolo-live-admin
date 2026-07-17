@@ -34,6 +34,8 @@ import {
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { supabase } from '@/lib/supabase';
+import { useAdminAccess } from '@/lib/adminAccess';
+import { moduleForPath } from '@/lib/adminModules';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -47,12 +49,6 @@ type NavItem = {
   href: string;
   icon: typeof LayoutDashboard;
   badgeKey?: string;
-  superOnly?: boolean;
-};
-
-type AdminProfile = {
-  full_name: string;
-  role: string;
 };
 
 const navItems: NavItem[] = [
@@ -65,34 +61,34 @@ const navItems: NavItem[] = [
   { name: 'Agency Stock Requests', href: '/stock-requests', icon: Package },
   { name: 'Reseller Stock Requests', href: '/reseller-stock-requests', icon: Package },
   { name: 'Live Rooms', href: '/live-rooms', icon: Radio },
-  { name: 'Game Control', href: '/games', icon: Gamepad2, superOnly: true },
+  { name: 'Game Control', href: '/games', icon: Gamepad2 },
   { name: 'Game History', href: '/game-history', icon: Trophy },
-  { name: 'Gifts Catalog', href: '/gifts', icon: Gift, superOnly: true },
-  { name: 'Audio Templates', href: '/audio-templates', icon: ImageIcon, superOnly: true },
-  { name: 'Mall Intros', href: '/mall-intros', icon: Video, superOnly: true },
-  { name: 'Profile Frames', href: '/profile-frames', icon: GalleryHorizontal, superOnly: true },
-  { name: 'VIP Subscriptions', href: '/vip-subscriptions', icon: Crown, superOnly: true },
-  { name: 'SVIP Subscriptions', href: '/svip-subscriptions', icon: ShieldCheck, superOnly: true },
-  { name: 'VIP Tiers', href: '/vip-tiers', icon: Crown, superOnly: true },
-  { name: 'Content & Progression', href: '/content', icon: Sparkles, superOnly: true },
+  { name: 'Gifts Catalog', href: '/gifts', icon: Gift },
+  { name: 'Audio Templates', href: '/audio-templates', icon: ImageIcon },
+  { name: 'Mall Intros', href: '/mall-intros', icon: Video },
+  { name: 'Profile Frames', href: '/profile-frames', icon: GalleryHorizontal },
+  { name: 'VIP Subscriptions', href: '/vip-subscriptions', icon: Crown },
+  { name: 'SVIP Subscriptions', href: '/svip-subscriptions', icon: ShieldCheck },
+  { name: 'VIP Tiers', href: '/vip-tiers', icon: Crown },
+  { name: 'Content & Progression', href: '/content', icon: Sparkles },
   { name: 'Splash Manager', href: '/splash', icon: ImageIcon },
   { name: 'Home Banners', href: '/banners', icon: GalleryHorizontal },
-  { name: 'Music Library', href: '/music', icon: Music, superOnly: true },
+  { name: 'Music Library', href: '/music', icon: Music },
   { name: 'Agencies', href: '/agencies', icon: ShieldCheck },
   { name: 'Resellers', href: '/resellers', icon: Store },
-  { name: 'Transactions', href: '/transactions', icon: Diamond, superOnly: true },
+  { name: 'Transactions', href: '/transactions', icon: Diamond },
   { name: 'Earnings', href: '/earnings', icon: TrendingUp },
   { name: 'Analytics', href: '/analytics', icon: BarChart3 },
-  { name: 'Error Logs', href: '/error-logs', icon: Bug, superOnly: true },
-  { name: 'Deleted Accounts', href: '/deleted-accounts', icon: UserX, superOnly: true },
-  { name: 'Managers', href: '/managers', icon: UserCog, superOnly: true },
-  { name: 'Settings', href: '/settings', icon: Settings, superOnly: true },
+  { name: 'Error Logs', href: '/error-logs', icon: Bug },
+  { name: 'Deleted Accounts', href: '/deleted-accounts', icon: UserX },
+  { name: 'Staff Accounts', href: '/managers', icon: UserCog },
+  { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const [profile, setProfile] = useState<{ full_name: string; role: string } | null>(null);
+  const { access, can } = useAdminAccess();
   const [adminId, setAdminId] = useState<string | null>(null);
   const [unreadDms, setUnreadDms] = useState(0);
 
@@ -102,12 +98,6 @@ export default function Sidebar() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
       if (mounted) setAdminId(session.user.id);
-      const { data } = await supabase
-        .from('profiles')
-        .select('full_name, role')
-        .eq('id', session.user.id)
-        .single();
-      if (mounted && data) setProfile(data as AdminProfile);
     })();
     return () => { mounted = false; };
   }, []);
@@ -167,16 +157,14 @@ export default function Sidebar() {
       <div className="p-6">
         <h1 className="text-2xl font-black gradient-text">CARE LIVE ADMIN</h1>
         <p className="text-[10px] text-gray-500 font-bold tracking-widest mt-1">
-          {profile?.role === 'manager' ? 'MANAGER PANEL' : 'SUPER ADMIN PANEL'}
+          {access?.role?.replace('_', ' ').toUpperCase() || 'ADMIN PANEL'}
         </p>
       </div>
 
       <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
         {navItems.map((item) => {
-          // Hide super-only items from managers. We treat `admin` as a
-          // legacy alias for super_admin (see migration 80).
-          const isSuperAdmin = profile?.role === 'super_admin' || profile?.role === 'admin';
-          if (item.superOnly && !isSuperAdmin) return null;
+          const adminModule = moduleForPath(item.href);
+          if (!adminModule || !can(adminModule.key)) return null;
           const isActive = pathname === item.href;
           const badge = item.badgeKey === 'unread_dms' ? unreadDms : 0;
           return (
@@ -208,14 +196,14 @@ export default function Sidebar() {
       <div className="p-4 border-t border-[#251B45]">
         <div className="flex items-center gap-3 p-3 rounded-xl bg-black/20 mb-2">
           <div className="w-8 h-8 rounded-full bg-pink-500 flex items-center justify-center font-bold text-xs">
-            {profile?.full_name?.[0]?.toUpperCase() || 'A'}
+            {access?.fullName?.[0]?.toUpperCase() || 'A'}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-bold truncate text-white">
-              {profile?.full_name || 'Admin'}
+              {access?.fullName || 'Admin'}
             </p>
             <p className="text-[10px] text-gray-500 truncate uppercase">
-              {profile?.role?.replace('_', ' ') || ''}
+              {access?.role?.replace('_', ' ') || ''}
             </p>
           </div>
         </div>

@@ -20,7 +20,7 @@ type RoundRow = {
   user: { full_name: string; display_id: number; avatar_url: string | null } | null;
 };
 
-const GAMES = ['all', 'teen_patti', 'fruit_roulette'] as const;
+const GAMES = ['all', 'teen_patti', 'fruit_roulette', 'greedy_lion', 'tin_patti_pro'] as const;
 type GameKey = typeof GAMES[number];
 
 export default function GameHistoryPage() {

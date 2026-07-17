@@ -1,12 +1,12 @@
 "use client";
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Shield, Phone, Lock } from 'lucide-react';
+import { Loader2, Shield, UserRound, Lock } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
   const router = useRouter();
-  const [phone, setPhone] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -15,15 +15,23 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
 
-    if (!phone || !password) {
-      setError('Phone and password are required.');
+    if (!identifier || !password) {
+      setError('Email or phone and password are required.');
       return;
     }
 
-    // Match mobile app's phone->dummy email trick
-    let fullPhone = phone.trim();
-    if (!fullPhone.startsWith('+')) fullPhone = '+880' + fullPhone;
-    const dummyEmail = `${fullPhone.replace('+', '')}@yolo.app`;
+    const raw = identifier.trim();
+    const emailCandidates = raw.includes('@')
+      ? [raw.toLowerCase()]
+      : (() => {
+          const digits = raw.replace(/\D/g, '');
+          const canonical = digits.startsWith('880')
+            ? digits
+            : digits.startsWith('0') ? `880${digits.slice(1)}` : `880${digits}`;
+          // The second value supports accounts created by the old login's
+          // +880 + 01... normalization bug.
+          return [...new Set([`${canonical}@yolo.app`, `880${digits}@yolo.app`])];
+        })();
 
     setLoading(true);
     try {
@@ -31,31 +39,43 @@ export default function LoginPage() {
       // (or got revoked server-side) it would still sit in localStorage and
       // make Supabase fire a "Invalid Refresh Token: Refresh Token Not Found"
       // before our signIn even runs. signOut() clears that state silently.
-      try { await supabase.auth.signOut(); } catch (_) {}
+      try { await supabase.auth.signOut(); } catch {}
 
-      const { data, error: signInErr } = await supabase.auth.signInWithPassword({
-        email: dummyEmail,
-        password,
-      });
-      if (signInErr) throw signInErr;
+      let data: Awaited<ReturnType<typeof supabase.auth.signInWithPassword>>['data'] | null = null;
+      let signInErr: Error | null = null;
+      for (const email of emailCandidates) {
+        const attempt = await supabase.auth.signInWithPassword({ email, password });
+        if (!attempt.error) { data = attempt.data; signInErr = null; break; }
+        signInErr = attempt.error;
+      }
+      if (signInErr || !data) throw signInErr || new Error('Login failed.');
       if (!data?.user) throw new Error('Login failed.');
 
-      // Check admin role
-      const { data: profile, error: profErr } = await supabase
-        .from('profiles')
-        .select('role, full_name')
-        .eq('id', data.user.id)
-        .single();
+      const access = await supabase.rpc('get_my_admin_access');
+      if (access.error || !access.data?.success || access.data?.is_active === false) {
+        // Migration rollout fallback for the existing owner account only.
+        const legacy = await supabase.from('profiles').select('role').eq('id', data.user.id).single();
+        if (!legacy.data || !['admin', 'super_admin'].includes(legacy.data.role)) {
+          await supabase.auth.signOut();
+          throw new Error('Access denied. This account has no active dashboard role.');
+        }
+      }
 
-      if (profErr) throw profErr;
-      if (!profile || !['admin', 'super_admin', 'manager'].includes(profile.role)) {
+      if (!data.user) {
         await supabase.auth.signOut();
-        throw new Error('Access denied. This panel is for admins only.');
+        throw new Error('Login failed.');
       }
 
       router.replace('/');
-    } catch (err: any) {
-      setError(err.message || 'Login failed.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Login failed.';
+      if (/exceed_cached_egress_quota|service for this project is restricted/i.test(message)) {
+        setError('Dashboard service is temporarily restricted by the Supabase project quota. The project owner must remove the spend cap or upgrade the plan.');
+      } else if (/networkerror|failed to fetch|network request failed/i.test(message)) {
+        setError('Cannot reach the authentication service. Check the connection and Supabase project status, then try again.');
+      } else {
+        setError(message);
+      }
     } finally {
       setLoading(false);
     }
@@ -81,17 +101,17 @@ export default function LoginPage() {
 
           <div>
             <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-2">
-              Phone Number
+              Email or phone
             </label>
             <div className="relative">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+              <UserRound className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
               <input
-                type="tel"
-                placeholder="+8801XXXXXXXXX"
+                type="text"
+                placeholder="admin@company.com or +8801XXXXXXXXX"
                 className="w-full bg-[#0E111E] border border-[#251B45] rounded-xl pl-10 pr-4 py-3 text-white focus:outline-none focus:border-pink-500 text-sm"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                autoComplete="tel"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                autoComplete="username"
                 disabled={loading}
               />
             </div>
@@ -124,7 +144,7 @@ export default function LoginPage() {
           </button>
 
           <p className="text-center text-[10px] text-gray-500">
-            Same phone & password as your mobile app account. Role must be manager or super_admin.
+            Use the credentials assigned by a dashboard administrator.
           </p>
         </form>
       </div>

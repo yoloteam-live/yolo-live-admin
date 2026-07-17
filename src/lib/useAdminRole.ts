@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { moduleForPath } from './adminModules';
+import { usePathname } from 'next/navigation';
+import { useAdminAccess } from './adminAccess';
 
 // All roles that the admin panel cares about. `admin` is kept only as
 // a fallback for any pre-migration-80 row that somehow survived; the
@@ -11,6 +12,7 @@ export type AdminRole =
   | 'reseller'
   | 'agency_owner'
   | 'manager'
+  | 'moderator'
   | 'super_admin'
   | 'admin'
   | null;
@@ -32,74 +34,17 @@ export type UseAdminRole = {
 // this mirrors that pattern so role-gated UI updates within ~200ms of
 // the row change without reload.
 export function useAdminRole(): UseAdminRole {
-  const [role, setRole] = useState<AdminRole>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let mounted = true;
-    let channel: ReturnType<typeof supabase.channel> | null = null;
-
-    (async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user?.id) {
-          if (mounted) {
-            setRole(null);
-            setLoading(false);
-          }
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .single();
-
-        if (!mounted) return;
-        if (error || !data) {
-          setRole(null);
-        } else {
-          setRole(((data as { role?: string }).role ?? null) as AdminRole);
-        }
-        setLoading(false);
-
-        // Subscribe to row updates so the role refresh is instant.
-        // Random suffix avoids the supabase-js channel-cache reuse bug
-        // (same pattern as Sidebar / AuthGate).
-        const key = `useAdminRole:${user.id}:${Math.random().toString(36).slice(2, 8)}`;
-        channel = supabase
-          .channel(key)
-          .on(
-            'postgres_changes',
-            { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${user.id}` },
-            (payload: { new: { role?: string } }) => {
-              if (!mounted) return;
-              const next = (payload.new?.role ?? null) as AdminRole;
-              setRole(next);
-            }
-          )
-          .subscribe();
-      } catch (_) {
-        if (mounted) {
-          setRole(null);
-          setLoading(false);
-        }
-      }
-    })();
-
-    return () => {
-      mounted = false;
-      if (channel) {
-        try { supabase.removeChannel(channel); } catch (_) {}
-      }
-    };
-  }, []);
+  const pathname = usePathname();
+  const { access, can, loading } = useAdminAccess();
+  const currentModule = moduleForPath(pathname);
+  const canManageCurrent = currentModule ? can(currentModule.key, 'manage') : access?.role === 'super_admin';
 
   return {
-    role,
-    isSuperAdmin: role === 'super_admin' || role === 'admin',
-    isManager: role === 'manager',
+    role: access?.role ?? null,
+    // Legacy pages use this flag as their write-access gate. It now maps
+    // to Manage permission for the current module.
+    isSuperAdmin: access?.role === 'super_admin' || canManageCurrent,
+    isManager: access?.role === 'manager',
     loading,
   };
 }

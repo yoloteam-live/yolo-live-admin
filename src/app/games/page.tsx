@@ -67,6 +67,7 @@ const TIN_PATTI_PRO_ITEMS = [
 ];
 
 const GLOBAL_PAYOUT_GAME_IDS = new Set(['greedy_lion', 'tin_patti_pro']);
+const APP_GAME_IDS = ['teen_patti', 'fruit_roulette', 'greedy_lion', 'tin_patti_pro'];
 
 const DEFAULT_GLOBAL_RULES = {
   pizza_enabled: true,
@@ -118,7 +119,8 @@ export default function GameControlPage() {
     console.log("Fetching game settings...");
     const { data, error } = await supabase
       .from('game_settings')
-      .select('*');
+      .select('*')
+      .in('id', APP_GAME_IDS);
     
     if (error) {
       console.error("Supabase Error:", error);
@@ -682,7 +684,7 @@ export default function GameControlPage() {
             const classic = await supabase
               .from('game_settings')
               .update({ win_chance_percent: 30, is_active: true })
-              .not('id', 'in', '(greedy_lion,tin_patti_pro)');
+              .in('id', ['teen_patti', 'fruit_roulette']);
             const globalPayoutGames = await supabase
               .from('game_settings')
               .update({ win_chance_percent: 60, is_active: false, forced_next_category: null, forced_next_result: null })
