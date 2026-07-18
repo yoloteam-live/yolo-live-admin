@@ -6,6 +6,7 @@ import { CheckCircle2, Edit2, Image as ImageIcon, Loader2, Plus, Trash2, ToggleL
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
 import { optimizeImageFile } from '@/lib/imageOptimizer';
+import { requireCurrentProjectStorageUrl } from '@/lib/storageUrls';
 
 type IntroRow = {
   id: string;
@@ -258,7 +259,10 @@ function IntroModal({ row, creating, onClose }: { row: IntroRow; creating: boole
     });
     setUploading(false);
     if (error) { alert(`Upload failed: ${error.message}`); return; }
-    const url = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+    const url = requireCurrentProjectStorageUrl(
+      supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl,
+      BUCKET,
+    );
     setValue((current) => isThumb ? { ...current, thumbnail_url: url } : {
       ...current,
       video_url: url,
@@ -274,6 +278,13 @@ function IntroModal({ row, creating, onClose }: { row: IntroRow; creating: boole
     const id = value.id.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-');
     if (!id || !value.name.trim() || !value.thumbnail_url || !value.video_url) {
       alert('ID, name, thumbnail and video are required.');
+      return;
+    }
+    try {
+      requireCurrentProjectStorageUrl(value.thumbnail_url, BUCKET);
+      requireCurrentProjectStorageUrl(value.video_url, BUCKET);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Invalid intro URL.');
       return;
     }
     if (value.diamond_cost < 0) { alert('Price cannot be negative.'); return; }

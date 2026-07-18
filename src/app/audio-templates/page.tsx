@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
 import { optimizeImageFile } from '@/lib/imageOptimizer';
+import { requireCurrentProjectStorageUrl } from '@/lib/storageUrls';
 import {
   Image as ImageIcon, Plus, Edit2, Trash2, Loader2, X, Upload, Diamond,
   CheckCircle2, ToggleLeft, ToggleRight,
@@ -267,10 +268,11 @@ function EditModal({
       return;
     }
     const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    const publicUrl = requireCurrentProjectStorageUrl(pub.publicUrl, BUCKET);
     if (kind === 'bg') {
-      setEditing({ ...editing, background_url: pub.publicUrl });
+      setEditing({ ...editing, background_url: publicUrl });
     } else {
-      setEditing({ ...editing, preview_url: pub.publicUrl });
+      setEditing({ ...editing, preview_url: publicUrl });
     }
     setUploaded(true);
     setTimeout(() => setUploaded(false), 2000);
@@ -283,6 +285,13 @@ function EditModal({
     }
     if (!editing.background_url) {
       alert('Background image is required — upload or paste a URL');
+      return;
+    }
+    try {
+      requireCurrentProjectStorageUrl(editing.background_url, BUCKET);
+      if (editing.preview_url) requireCurrentProjectStorageUrl(editing.preview_url, BUCKET);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Invalid template URL.');
       return;
     }
     if (editing.diamond_cost < 0) {

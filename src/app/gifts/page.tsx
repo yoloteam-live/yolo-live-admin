@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, Component, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
+import { requireCurrentProjectStorageUrl } from '@/lib/storageUrls';
 import dynamic from 'next/dynamic';
 import {
   Gift, Search, Plus, Edit2, Trash2, Loader2, X, CheckCircle2, XCircle,
@@ -120,6 +121,13 @@ export default function GiftsPage() {
     }
     if (editing.diamond_cost < 1) {
       alert('Diamond cost must be at least 1');
+      return;
+    }
+    try {
+      if (editing.animation_url) requireCurrentProjectStorageUrl(editing.animation_url, ANIM_BUCKET);
+      if (editing.sound_url) requireCurrentProjectStorageUrl(editing.sound_url, SOUND_BUCKET);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Invalid gift media URL.');
       return;
     }
     setSaving(true);
@@ -441,7 +449,7 @@ function EditModal({
       return;
     }
     const { data: pub } = supabase.storage.from(ANIM_BUCKET).getPublicUrl(path);
-    setEditing({ ...editing, animation_url: pub.publicUrl });
+    setEditing({ ...editing, animation_url: requireCurrentProjectStorageUrl(pub.publicUrl, ANIM_BUCKET) });
     setAnimUploaded(true);
     setTimeout(() => setAnimUploaded(false), 2000);
   }
@@ -477,7 +485,7 @@ function EditModal({
       return;
     }
     const { data: pub } = supabase.storage.from(SOUND_BUCKET).getPublicUrl(path);
-    setEditing({ ...editing, sound_url: pub.publicUrl });
+    setEditing({ ...editing, sound_url: requireCurrentProjectStorageUrl(pub.publicUrl, SOUND_BUCKET) });
     setSoundUploaded(true);
     setTimeout(() => setSoundUploaded(false), 2000);
   }

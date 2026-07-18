@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Edit2, Image as ImageIcon, Loader2, Plus, Trash2, Upload, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
+import { requireCurrentProjectStorageUrl } from '@/lib/storageUrls';
 
 type FrameRow = {
   id: string;
@@ -163,7 +164,10 @@ function FrameModal({ row, creating, onClose }: { row: FrameRow; creating: boole
     });
     setUploading(false);
     if (error) { alert(`Upload failed: ${error.message}`); return; }
-    const url = supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+    const url = requireCurrentProjectStorageUrl(
+      supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl,
+      BUCKET,
+    );
     setValue((current) => ({ ...current, frame_url: url }));
   }
 
@@ -173,6 +177,8 @@ function FrameModal({ row, creating, onClose }: { row: FrameRow; creating: boole
       alert('ID, name and WebP frame are required.');
       return;
     }
+    try { requireCurrentProjectStorageUrl(value.frame_url, BUCKET); }
+    catch (error) { alert(error instanceof Error ? error.message : 'Invalid frame URL.'); return; }
     if (value.diamond_cost < 0) { alert('Price cannot be negative.'); return; }
     setSaving(true);
     const payload = {
