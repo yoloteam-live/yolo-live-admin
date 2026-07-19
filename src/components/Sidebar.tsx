@@ -28,6 +28,7 @@ import {
   UserX,
   Image as ImageIcon,
   GalleryHorizontal,
+  Tags,
   UserCog,
   Video,
 } from 'lucide-react';
@@ -67,6 +68,7 @@ const navItems: NavItem[] = [
   { name: 'Audio Templates', href: '/audio-templates', icon: ImageIcon },
   { name: 'Mall Intros', href: '/mall-intros', icon: Video },
   { name: 'Profile Frames', href: '/profile-frames', icon: GalleryHorizontal },
+  { name: 'Comment Tags', href: '/comment-tags', icon: Tags },
   { name: 'VIP Subscriptions', href: '/vip-subscriptions', icon: Crown },
   { name: 'SVIP Subscriptions', href: '/svip-subscriptions', icon: ShieldCheck },
   { name: 'VIP Tiers', href: '/vip-tiers', icon: Crown },

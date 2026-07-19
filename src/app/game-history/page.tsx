@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import {
   Trophy, Search, Loader2, Gamepad2, TrendingUp, TrendingDown, RefreshCw,
@@ -12,15 +12,16 @@ type RoundRow = {
   // rounds don't belong to a single player. The render path handles
   // null by labelling the row as "Room round".
   user_id: string | null;
-  bets: any;
-  result: any;
+  bets: unknown;
+  result: { winning_type?: string; winner_pos?: string } | null;
   total_bet: number;
   win_amount: number;
   created_at: string;
   user: { full_name: string; display_id: number; avatar_url: string | null } | null;
 };
 
-const GAMES = ['all', 'teen_patti', 'fruit_roulette', 'greedy_lion', 'tin_patti_pro'] as const;
+const ACTIVE_GAMES = ['greedy_lion', 'tin_patti_pro'] as const;
+const GAMES = ['all', ...ACTIVE_GAMES] as const;
 type GameKey = typeof GAMES[number];
 
 export default function GameHistoryPage() {
@@ -31,9 +32,7 @@ export default function GameHistoryPage() {
   const [search, setSearch] = useState('');
   const [limit, setLimit] = useState(100);
 
-  useEffect(() => { fetchRounds(); }, [limit]);
-
-  async function fetchRounds() {
+  const fetchRounds = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from('game_rounds')
@@ -41,11 +40,17 @@ export default function GameHistoryPage() {
         *,
         user:profiles!game_rounds_user_id_fkey(full_name, display_id, avatar_url)
       `)
+      .in('game_type', ACTIVE_GAMES)
       .order('created_at', { ascending: false })
       .limit(limit);
     setRows((data as RoundRow[]) || []);
     setLoading(false);
-  }
+  }, [limit]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void fetchRounds(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [fetchRounds]);
 
   const filtered = rows.filter((r) => {
     if (gameFilter !== 'all' && r.game_type !== gameFilter) return false;
@@ -173,8 +178,8 @@ export default function GameHistoryPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                        r.game_type === 'teen_patti' ? 'bg-purple-500/15 text-purple-300' : 'bg-amber-500/15 text-amber-300'
-                      }`}>{r.game_type.replace('_',' ')}</span>
+                        r.game_type === 'tin_patti_pro' ? 'bg-purple-500/15 text-purple-300' : 'bg-amber-500/15 text-amber-300'
+                      }`}>{r.game_type.replaceAll('_',' ')}</span>
                     </td>
                     <td className="px-4 py-3 text-white">
                       {/* Since migration 51, game_rounds.user_id is NULL on
