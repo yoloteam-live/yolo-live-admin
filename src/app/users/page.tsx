@@ -11,16 +11,30 @@ export default function UsersPage() {
   const { isSuperAdmin } = useAdminRole();
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState<any[]>([]);
+  const [commentTags, setCommentTags] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
     fetchUsers();
+    fetchCommentTags();
     checkConnection();
   }, []);
 
+  async function fetchCommentTags() {
+    const { data, error } = await supabase
+      .from('comment_tags')
+      .select('id, name, image_url, is_active, display_order')
+      .order('display_order')
+      .order('name');
+    if (!error) setCommentTags(data || []);
+  }
+
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
+  const [displayIdError, setDisplayIdError] = useState('');
+  const [tagAssignmentStatus, setTagAssignmentStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [tagAssignmentError, setTagAssignmentError] = useState('');
 
   const [promoteUser, setPromoteUser] = useState<any>(null);
   const [promoteCode, setPromoteCode] = useState('');
@@ -143,11 +157,23 @@ export default function UsersPage() {
       // filter UI works on this in-memory window; if support needs a
       // user past the window, they can search by display_id or full
       // name (both indexed).
-      const { data, error } = await supabase
+      let usersResponse: { data: any[] | null; error: { message?: string } | null } = await supabase
         .from('profiles')
-        .select('id, display_id, full_name, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, created_at')
+        .select('id, display_id, full_name, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, comment_tag_id, created_at')
         .order('created_at', { ascending: false })
         .limit(200);
+
+      // Migration 126 may be applied a few minutes after this dashboard
+      // deploy. Keep User Management operational during that window.
+      if (usersResponse.error && /comment_tag_id/i.test(usersResponse.error.message || '')) {
+        usersResponse = await supabase
+          .from('profiles')
+          .select('id, display_id, full_name, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, created_at')
+          .order('created_at', { ascending: false })
+          .limit(200);
+      }
+
+      const { data, error } = usersResponse;
 
       if (error) {
         console.error('users fetch:', error.message);
@@ -167,6 +193,8 @@ export default function UsersPage() {
 
   async function updateUser() {
     if (!editingUser) return;
+    const displayIdIsValid = await validateDisplayId(editingUser.display_id);
+    if (!displayIdIsValid) return;
     setLoading(true);
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
@@ -196,6 +224,9 @@ export default function UsersPage() {
         p_role: isSuperAdmin ? (roleNorm || null) : null,
         p_status: statusNorm,
         p_is_banned: null,
+        p_display_id: editingUser.display_id
+          ? editingUser.display_id.toString()
+          : null,
       });
 
       if (error) {
@@ -208,8 +239,23 @@ export default function UsersPage() {
         });
         alert("Update Failed: " + (error.message || JSON.stringify(error)));
       } else if (!data?.success) {
-        alert(data?.message || 'Update failed');
+        if (data?.field === 'display_id') {
+          setDisplayIdError(data?.message || 'This User ID cannot be used');
+        } else {
+          alert(data?.message || 'Update failed');
+        }
       } else {
+        if (isSuperAdmin) {
+          const { data: tagResult, error: tagError } = await supabase.rpc('admin_set_user_comment_tag', {
+            p_user_id: editingUser.id,
+            p_tag_id: editingUser.comment_tag_id || null,
+          });
+          if (tagError || !tagResult?.success) {
+            alert('Profile saved, but the comment tag could not be updated: ' + (tagError?.message || tagResult?.message || 'Unknown error'));
+            setLoading(false);
+            return;
+          }
+        }
         setIsEditModalOpen(false);
         setEditingUser(null);
         fetchUsers();
@@ -220,6 +266,61 @@ export default function UsersPage() {
       alert("Error: " + e.message);
     }
     setLoading(false);
+  }
+
+  async function validateDisplayId(value: unknown) {
+    if (!editingUser) return false;
+
+    const candidate = String(value ?? '').trim();
+    if (!/^\d+$/.test(candidate) || candidate === '0' || candidate.length > 16) {
+      setDisplayIdError('Enter a positive numeric User ID with at most 16 digits.');
+      return false;
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('display_id', candidate)
+      .neq('id', editingUser.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Display ID validation failed:', error.message);
+      setDisplayIdError('Could not verify this User ID. Please try again.');
+      return false;
+    }
+
+    if (data) {
+      setDisplayIdError('This User ID is already in use.');
+      return false;
+    }
+
+    setDisplayIdError('');
+    return true;
+  }
+
+  async function assignCommentTag(tagId: string) {
+    if (!editingUser || !isSuperAdmin) return;
+    setEditingUser((current: any) => current ? ({ ...current, comment_tag_id: tagId || null }) : current);
+    setTagAssignmentStatus('saving');
+    setTagAssignmentError('');
+
+    const { data, error } = await supabase.rpc('admin_set_user_comment_tag', {
+      p_user_id: editingUser.id,
+      p_tag_id: tagId || null,
+    });
+
+    if (error || !data?.success) {
+      setTagAssignmentStatus('error');
+      setTagAssignmentError(error?.message || data?.message || 'Tag assignment failed');
+      return;
+    }
+
+    setTagAssignmentStatus('saved');
+    setUsers((current) => current.map((row) => (
+      row.id === editingUser.id ? { ...row, comment_tag_id: tagId || null } : row
+    )));
   }
 
   // Admin override for the per-user notification preferences. Use it
@@ -341,6 +442,11 @@ export default function UsersPage() {
                     </div>
                     <div>
                       <p className="font-bold text-white">{user.full_name || 'Unknown'}</p>
+                      {user.comment_tag_id && (
+                        <p className="text-[9px] text-emerald-400 font-bold uppercase mt-0.5">
+                          Tag: {commentTags.find((tag) => tag.id === user.comment_tag_id)?.name || user.comment_tag_id}
+                        </p>
+                      )}
                       <p className="text-[10px] text-gray-500 font-mono">ID: {user.display_id || 'Generating...'}</p>
                     </div>
                   </div>
@@ -423,6 +529,9 @@ export default function UsersPage() {
                       className="p-2 hover:bg-white/5 rounded-lg text-gray-400 hover:text-white transition-all"
                       onClick={() => {
                         setEditingUser({ ...user });
+                        setDisplayIdError('');
+                        setTagAssignmentStatus('idle');
+                        setTagAssignmentError('');
                         setIsEditModalOpen(true);
                       }}
                     >
@@ -683,13 +792,42 @@ export default function UsersPage() {
       {/* Edit User Modal */}
       {isEditModalOpen && editingUser && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#1E1A34] border border-[#251B45] rounded-3xl w-full max-w-md overflow-hidden shadow-2xl">
+          <div className="bg-[#1E1A34] border border-[#251B45] rounded-3xl w-full max-w-md max-h-[92vh] overflow-hidden shadow-2xl flex flex-col">
             <div className="p-6 border-b border-white/5">
               <h3 className="text-xl font-black text-white">Edit User Profile</h3>
               <p className="text-xs text-gray-500">Updating ID: {editingUser.display_id || editingUser.id}</p>
             </div>
             
-            <div className="p-6 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto">
+              <div>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">User ID</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className={`w-full bg-[#0E111E] border rounded-xl px-4 py-3 text-white font-mono focus:outline-none ${
+                    displayIdError
+                      ? 'border-red-500 focus:border-red-400'
+                      : 'border-[#251B45] focus:border-pink-500'
+                  }`}
+                  value={editingUser.display_id ?? ''}
+                  onChange={(e) => {
+                    const numericValue = e.target.value.replace(/\D/g, '').slice(0, 16);
+                    setEditingUser({ ...editingUser, display_id: numericValue });
+                    setDisplayIdError('');
+                  }}
+                  onBlur={(e) => void validateDisplayId(e.target.value)}
+                  aria-invalid={Boolean(displayIdError)}
+                  aria-describedby={displayIdError ? 'display-id-error' : undefined}
+                />
+                {displayIdError && (
+                  <p id="display-id-error" className="mt-1.5 text-xs font-semibold text-red-400">
+                    {displayIdError}
+                  </p>
+                )}
+                <p className="mt-1.5 text-[10px] text-gray-500">Each account must have a different User ID.</p>
+              </div>
+
               <div>
                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Full Name</label>
                 <input 
@@ -699,6 +837,46 @@ export default function UsersPage() {
                   onChange={(e) => setEditingUser({ ...editingUser, full_name: e.target.value })}
                 />
               </div>
+
+              {isSuperAdmin && (
+                <div>
+                  <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Permanent Comment Tag</label>
+                  <select
+                    className="w-full bg-[#0E111E] border border-[#251B45] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 appearance-none"
+                    value={editingUser.comment_tag_id || ''}
+                    onChange={(e) => void assignCommentTag(e.target.value)}
+                    disabled={tagAssignmentStatus === 'saving'}
+                  >
+                    <option value="">No tag</option>
+                    {commentTags.map((tag) => (
+                      <option key={tag.id} value={tag.id} disabled={!tag.is_active && tag.id !== editingUser.comment_tag_id}>
+                        {tag.name}{!tag.is_active ? ' (disabled)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {editingUser.comment_tag_id && (() => {
+                    const selected = commentTags.find((tag) => tag.id === editingUser.comment_tag_id);
+                    return selected?.image_url ? (
+                      <div className="mt-2 h-14 rounded-xl bg-black/20 border border-white/5 p-1.5 flex items-center">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={selected.image_url} alt={selected.name} className="max-h-full max-w-full object-contain" />
+                      </div>
+                    ) : null;
+                  })()}
+                  {tagAssignmentStatus === 'saving' && (
+                    <p className="text-[10px] text-amber-300 mt-1.5">Assigning tag…</p>
+                  )}
+                  {tagAssignmentStatus === 'saved' && (
+                    <p className="text-[10px] font-bold text-emerald-400 mt-1.5">Tag assigned successfully. It will appear with this user’s comments.</p>
+                  )}
+                  {tagAssignmentStatus === 'error' && (
+                    <p className="text-[10px] font-bold text-red-400 mt-1.5">{tagAssignmentError}</p>
+                  )}
+                  {tagAssignmentStatus === 'idle' && (
+                    <p className="text-[10px] text-gray-500 mt-1.5">Select a tag to assign it immediately. Manage choices from Comment Tags.</p>
+                  )}
+                </div>
+              )}
 
               {isSuperAdmin && (
                 <div className="grid grid-cols-2 gap-4">
@@ -750,13 +928,19 @@ export default function UsersPage() {
             <div className="p-6 bg-white/5 flex gap-3">
               <button 
                 className="flex-1 bg-white/5 hover:bg-white/10 text-white font-bold py-3 rounded-xl transition-all"
-                onClick={() => setIsEditModalOpen(false)}
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setDisplayIdError('');
+                  setTagAssignmentStatus('idle');
+                  setTagAssignmentError('');
+                }}
               >
                 Cancel
               </button>
               <button 
                 className="flex-2 bg-gradient-to-r from-pink-500 to-purple-600 hover:scale-105 text-white font-bold py-3 px-8 rounded-xl transition-all shadow-lg shadow-pink-500/20"
                 onClick={updateUser}
+                disabled={loading || Boolean(displayIdError)}
               >
                 {loading ? <Loader2 className="animate-spin" size={20} /> : 'Save Changes'}
               </button>

@@ -67,7 +67,7 @@ const TIN_PATTI_PRO_ITEMS = [
 ];
 
 const GLOBAL_PAYOUT_GAME_IDS = new Set(['greedy_lion', 'tin_patti_pro']);
-const APP_GAME_IDS = ['teen_patti', 'fruit_roulette', 'greedy_lion', 'tin_patti_pro'];
+const APP_GAME_IDS = ['greedy_lion', 'tin_patti_pro'];
 
 const DEFAULT_GLOBAL_RULES = {
   pizza_enabled: true,
@@ -164,9 +164,8 @@ export default function GameControlPage() {
   }
 
   // Save the bet-limit + multiplier block for a single game. The
-  // multipliers field is a JSONB so we accept any valid JSON the admin
-  // pastes in (teen_patti uses {"win":2}, fruit_roulette uses an array
-  // of slot definitions).
+  // Multipliers are stored as JSONB, so the admin can edit the supported
+  // game's server-driven payout definitions without a dashboard rebuild.
   async function saveLimits(game: GameSetting) {
     let parsedMultipliers: unknown = null;
     try {
@@ -654,13 +653,9 @@ export default function GameControlPage() {
                     }}
                   />
                   <p className="text-[10px] text-gray-600 mt-1">
-                    {game.id === 'teen_patti'
-                      ? 'Format: {"win": 2}'
-                      : game.id === 'greedy_lion'
-                        ? 'Format: array of {id, label, category, m} items'
-                        : game.id === 'tin_patti_pro'
-                          ? 'Format: array of {id, label, m} boards'
-                        : 'Format: array of {id, type, m} slots'}
+                    {game.id === 'greedy_lion'
+                      ? 'Format: array of {id, label, category, m} items'
+                      : 'Format: array of {id, label, m} boards'}
                   </p>
                 </div>
 
@@ -679,19 +674,15 @@ export default function GameControlPage() {
         {/* Global Reset Card */}
         <button
           onClick={async () => {
-            if (!window.confirm('Reset classic games to win_chance_percent = 30% and keep global payout games offline until payout-owner wallets are confirmed?\n\nActive in-progress rounds are not affected.')) return;
+            if (!window.confirm('Reset supported games and keep them offline until payout-owner wallets are confirmed?\n\nActive in-progress rounds are not affected.')) return;
             setSaving(true);
-            const classic = await supabase
-              .from('game_settings')
-              .update({ win_chance_percent: 30, is_active: true })
-              .in('id', ['teen_patti', 'fruit_roulette']);
             const globalPayoutGames = await supabase
               .from('game_settings')
               .update({ win_chance_percent: 60, is_active: false, forced_next_category: null, forced_next_result: null })
               .in('id', ['greedy_lion', 'tin_patti_pro']);
             setSaving(false);
-            if (classic.error || globalPayoutGames.error) {
-              alert('Reset failed: ' + (classic.error?.message || globalPayoutGames.error?.message));
+            if (globalPayoutGames.error) {
+              alert('Reset failed: ' + globalPayoutGames.error.message);
             } else {
               setSuccess(true);
               setTimeout(() => setSuccess(false), 3000);

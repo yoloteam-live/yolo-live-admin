@@ -23,6 +23,7 @@ export const ADMIN_MODULES: AdminModule[] = [
   { key: 'audio_templates', name: 'Audio Templates', href: '/audio-templates' },
   { key: 'mall_intros', name: 'Mall Intros', href: '/mall-intros' },
   { key: 'profile_frames', name: 'Profile Frames', href: '/profile-frames' },
+  { key: 'comment_tags', name: 'Comment Tags', href: '/comment-tags' },
   { key: 'vip_subscriptions', name: 'VIP Subscriptions', href: '/vip-subscriptions' },
   { key: 'svip_subscriptions', name: 'SVIP Subscriptions', href: '/svip-subscriptions' },
   { key: 'vip_tiers', name: 'VIP Tiers', href: '/vip-tiers' },
