@@ -57,6 +57,7 @@ const navItems: NavItem[] = [
   { name: 'Messages', href: '/messages', icon: MessageSquare, badgeKey: 'unread_dms' },
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Applications', href: '/applications', icon: Inbox },
+  { name: 'Nickname Requests', href: '/nickname-applications', icon: Tags },
   { name: 'User Reports', href: '/reports', icon: ShieldAlert, badgeKey: 'pending_reports' },
   { name: 'Top-Up Approvals', href: '/topups', icon: Wallet },
   { name: 'Agency Stock Requests', href: '/stock-requests', icon: Package },

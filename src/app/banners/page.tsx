@@ -19,7 +19,7 @@ type Banner = {
 };
 
 const RECOMMENDED_SIZE = "1080 × 500 px";
-const MAX_ACTIVE = 3;
+const MAX_ACTIVE = 5;
 const MAX_BANNER_UPLOAD_BYTES = 350 * 1024;
 
 export default function BannersPage() {
@@ -50,7 +50,7 @@ export default function BannersPage() {
     return () => { try { supabase.removeChannel(ch); } catch {} };
   }, [load]);
 
-  const activeCount = rows.filter((r) => r.is_active).length;
+  const activeCountFor = (position: 'top' | 'bottom') => rows.filter((r) => r.is_active && (r.position ?? 'top') === position).length;
 
   async function uploadFile(file: File): Promise<string | null> {
     setUploading(true);
@@ -99,7 +99,8 @@ export default function BannersPage() {
     if (!editing) return;
     if (!editing.image_url) { alert("Please upload a banner image first."); return; }
     const wouldBeActive = editing.is_active ?? true;
-    const otherActiveCount = rows.filter((r) => r.is_active && r.id !== editing.id).length;
+    const position = editing.position ?? 'top';
+    const otherActiveCount = rows.filter((r) => r.is_active && r.id !== editing.id && (r.position ?? 'top') === position).length;
     if (wouldBeActive && otherActiveCount >= MAX_ACTIVE) {
       alert(`Only ${MAX_ACTIVE} banners can be active at a time. Disable another first.`);
       return;
@@ -123,7 +124,7 @@ export default function BannersPage() {
   }
 
   async function toggleActive(b: Banner) {
-    if (!b.is_active && activeCount >= MAX_ACTIVE) {
+    if (!b.is_active && activeCountFor(b.position ?? 'top') >= MAX_ACTIVE) {
       alert(`Only ${MAX_ACTIVE} banners can be active at a time. Disable another first.`);
       return;
     }
@@ -169,7 +170,7 @@ export default function BannersPage() {
           </div>
         </div>
         <button
-          onClick={() => setEditing({ image_url: "", link_url: "", display_order: (rows.at(-1)?.display_order ?? -1) + 1, is_active: activeCount < MAX_ACTIVE, position: 'top' })}
+          onClick={() => setEditing({ image_url: "", link_url: "", display_order: (rows.at(-1)?.display_order ?? -1) + 1, is_active: activeCountFor('top') < MAX_ACTIVE, position: 'top' })}
           className="bg-gradient-to-r from-pink-500 to-violet-600 text-white font-bold py-2.5 px-5 rounded-xl flex items-center gap-2 hover:scale-[1.02] shadow-lg shadow-pink-500/20"
         >
           <Plus size={16} /> New banner
@@ -177,7 +178,7 @@ export default function BannersPage() {
       </div>
 
       <div className="mb-4 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-gray-400">
-        <b className="text-white">{activeCount}</b> / {MAX_ACTIVE} active. Slot order = top → bottom. Use arrows to reorder.
+        Top <b className="text-white">{activeCountFor('top')}</b> / {MAX_ACTIVE} · Bottom <b className="text-white">{activeCountFor('bottom')}</b> / {MAX_ACTIVE}. Use arrows to reorder.
       </div>
 
       {loading ? (

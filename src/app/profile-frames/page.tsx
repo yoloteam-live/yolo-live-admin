@@ -14,6 +14,8 @@ type FrameRow = {
   diamond_cost: number;
   is_active: boolean;
   display_order: number;
+  validity_days: number;
+  access_scope: 'public' | 'admin_only';
 };
 
 const BUCKET = 'profile-frames';
@@ -24,7 +26,7 @@ const BUNDLED_PREVIEWS: Record<string, string> = {
   'bundled://royal-gold': '/profile-frames/royal-gold.webp',
 };
 const emptyFrame: FrameRow = {
-  id: '', name: '', frame_url: '', diamond_cost: 0, is_active: true, display_order: 0,
+  id: '', name: '', frame_url: '', diamond_cost: 0, is_active: true, display_order: 0, validity_days: 7, access_scope: 'public',
 };
 
 function framePreviewUrl(frameUrl: string) {
@@ -118,6 +120,7 @@ export default function ProfileFramesPage() {
               <div className="p-4">
                 <div className="font-bold text-white truncate">{frame.name}</div>
                 <div className="text-[10px] text-gray-500 mt-1">ID: {frame.id} · Order: {frame.display_order}</div>
+                <div className="text-[10px] text-violet-300 mt-1">{frame.validity_days || 7} days · {frame.access_scope === 'admin_only' ? 'Exclusive' : 'Public'}</div>
                 <div className="flex gap-2 mt-4">
                   <button onClick={() => { setEditing({ ...frame }); setCreating(false); }} className="flex-1 py-2 rounded-lg bg-white/5 text-white text-xs font-bold flex items-center justify-center gap-1.5">
                     <Edit2 size={13} /> Edit
@@ -186,6 +189,8 @@ function FrameModal({ row, creating, onClose }: { row: FrameRow; creating: boole
       diamond_cost: Number(value.diamond_cost) || 0,
       display_order: Number(value.display_order) || 0,
       is_active: value.is_active,
+      validity_days: Math.max(1, Number(value.validity_days) || 7),
+      access_scope: value.access_scope || 'public',
       updated_at: new Date().toISOString(),
     };
     const { error } = creating
@@ -208,6 +213,14 @@ function FrameModal({ row, creating, onClose }: { row: FrameRow; creating: boole
           <div className="space-y-4">
             <label className="block text-xs text-gray-400">Frame ID
               <input className={`${input} mt-1`} disabled={!creating} value={value.id} onChange={(e) => setValue({ ...value, id: e.target.value })} placeholder="royal-gold" />
+            </label>
+            <label className="block text-xs text-gray-400">Ownership duration (days)
+              <input type="number" min={1} className={`${input} mt-1`} value={value.validity_days || 7} onChange={(e) => setValue({ ...value, validity_days: Number(e.target.value) })} />
+            </label>
+            <label className="block text-xs text-gray-400">Access
+              <select className={`${input} mt-1`} value={value.access_scope || 'public'} onChange={(e) => setValue({ ...value, access_scope: e.target.value as 'public'|'admin_only' })}>
+                <option value="public">Public shop</option><option value="admin_only">Admin-only exclusive</option>
+              </select>
             </label>
             <label className="block text-xs text-gray-400">Name
               <input className={`${input} mt-1`} value={value.name} onChange={(e) => setValue({ ...value, name: e.target.value })} />
