@@ -21,6 +21,8 @@ type IntroRow = {
   video_width?: number | null;
   video_height?: number | null;
   video_mime_type?: string | null;
+  validity_days: number;
+  access_scope: 'public' | 'admin_only';
 };
 
 const BUCKET = 'mall-intros';
@@ -48,6 +50,8 @@ const emptyIntro: IntroRow = {
   video_width: null,
   video_height: null,
   video_mime_type: null,
+  validity_days: 7,
+  access_scope: 'public',
 };
 
 function previewUrl(url: string) {
@@ -169,6 +173,7 @@ export default function MallIntrosPage() {
               <div className="p-4">
                 <div className="font-bold text-white truncate">{row.name}</div>
                 <div className="text-[10px] text-gray-500 mt-1">ID: {row.id} · Order: {row.display_order}</div>
+                <div className="text-[10px] text-cyan-300 mt-1">{row.validity_days || 7} days · {row.access_scope === 'admin_only' ? 'Exclusive' : 'Public'}</div>
                 <div className="flex gap-2 mt-4">
                   <button onClick={() => { setEditing({ ...row }); setCreating(false); }} className="flex-1 py-2 rounded-lg bg-white/5 text-white text-xs font-bold flex items-center justify-center gap-1.5">
                     <Edit2 size={13} /> Edit
@@ -302,6 +307,8 @@ function IntroModal({ row, creating, onClose }: { row: IntroRow; creating: boole
       video_width: value.video_width || null,
       video_height: value.video_height || null,
       video_mime_type: value.video_mime_type || null,
+      validity_days: Math.max(1, Number(value.validity_days) || 7),
+      access_scope: value.access_scope || 'public',
       updated_at: new Date().toISOString(),
     };
     const { error } = creating
@@ -336,6 +343,16 @@ function IntroModal({ row, creating, onClose }: { row: IntroRow; creating: boole
               </label>
               <label className="block text-xs text-gray-400">Display order
                 <input type="number" className={`${input} mt-1`} value={value.display_order} onChange={(e) => setValue({ ...value, display_order: Number(e.target.value) || 0 })} />
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block text-xs text-gray-400">Ownership days
+                <input type="number" min={1} className={`${input} mt-1`} value={value.validity_days || 7} onChange={(e) => setValue({ ...value, validity_days: Number(e.target.value) })} />
+              </label>
+              <label className="block text-xs text-gray-400">Access
+                <select className={`${input} mt-1`} value={value.access_scope || 'public'} onChange={(e) => setValue({ ...value, access_scope: e.target.value as 'public'|'admin_only' })}>
+                  <option value="public">Public shop</option><option value="admin_only">Admin-only</option>
+                </select>
               </label>
             </div>
             <label className="flex items-center gap-2 text-sm text-gray-300">

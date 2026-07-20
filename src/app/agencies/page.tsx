@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from 'react';
 import {
-  Search, ShieldCheck, TrendingUp, Users, Loader2, CheckCircle2, XCircle, Ban, RefreshCw,
+  Search, ShieldCheck, TrendingUp, Users, Loader2, CheckCircle2, XCircle, Ban, RefreshCw, UserPlus, X,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -19,11 +19,28 @@ type Agency = {
   owner?: { full_name: string; display_id: number };
 };
 
+type JoinRequest = {
+  id: string; user_id: string; agency_id: string; status: string; applicant_note?: string;
+  created_at: string; user?: { full_name: string; display_id: number; avatar_url?: string };
+  agency?: { name: string; code: string };
+};
+
+type AgencyMember = {
+  host_id: string; status: string; joined_at: string;
+  host?: { full_name: string; display_id: number; avatar_url?: string };
+};
+
 export default function AgenciesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, members: 0, payouts: 0 });
+  const [requests, setRequests] = useState<JoinRequest[]>([]);
+  const [assignAgency, setAssignAgency] = useState<Agency | null>(null);
+  const [agencyMembers, setAgencyMembers] = useState<AgencyMember[]>([]);
+  const [userQuery, setUserQuery] = useState('');
+  const [userMatches, setUserMatches] = useState<any[]>([]);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -31,7 +48,7 @@ export default function AgenciesPage() {
 
   async function fetchData() {
     setLoading(true);
-    const [agenciesRes, payoutSumRes] = await Promise.all([
+    const [agenciesRes, payoutSumRes, requestsRes] = await Promise.all([
       supabase
         .from('agencies')
         .select('*, owner:profiles!agencies_owner_id_fkey(full_name, display_id)')
@@ -40,7 +57,13 @@ export default function AgenciesPage() {
         .from('agency_payouts')
         .select('bdt_value')
         .eq('status', 'paid'),
+      supabase
+        .from('agency_join_requests')
+        .select('id,user_id,agency_id,status,applicant_note,created_at,user:profiles!agency_join_requests_user_id_fkey(full_name,display_id,avatar_url),agency:agencies!agency_join_requests_agency_id_fkey(name,code)')
+        .eq('status', 'pending')
+        .order('created_at', { ascending: true }),
     ]);
+    setRequests((requestsRes.data as any[]) || []);
 
     if (agenciesRes.data) {
       setAgencies(agenciesRes.data as any);
@@ -55,6 +78,64 @@ export default function AgenciesPage() {
       });
     }
     setLoading(false);
+  }
+
+  async function reviewRequest(request: JoinRequest, approve: boolean, agencyId?: string) {
+    setActionBusy(request.id);
+    const note = approve ? null : window.prompt('Optional rejection reason') || null;
+    const { data, error } = await supabase.rpc('admin_review_agency_request', {
+      p_request_id: request.id,
+      p_approve: approve,
+      p_agency_id: agencyId || request.agency_id,
+      p_review_note: note,
+    });
+    setActionBusy(null);
+    if (error || !data?.success) alert(data?.message || error?.message || 'Request update failed');
+    else await fetchData();
+  }
+
+  async function searchUsers(value: string) {
+    setUserQuery(value);
+    const term = value.trim();
+    if (term.length < 2) { setUserMatches([]); return; }
+    let query = supabase.from('profiles').select('id,full_name,display_id,avatar_url,agency_id,is_banned').eq('is_banned', false).limit(10);
+    query = /^\d+$/.test(term) ? query.eq('display_id', Number(term)) : query.ilike('full_name', `%${term}%`);
+    const { data } = await query;
+    setUserMatches(data || []);
+  }
+
+  async function assignUser(userId: string) {
+    if (!assignAgency) return;
+    setActionBusy(userId);
+    const { data, error } = await supabase.rpc('admin_assign_agency_host', {
+      p_user_id: userId, p_agency_id: assignAgency.id, p_request_id: null, p_review_note: 'Direct dashboard assignment',
+    });
+    setActionBusy(null);
+    if (error || !data?.success) alert(data?.message || error?.message || 'Assignment failed');
+    else { await openHostManager(assignAgency); setUserQuery(''); setUserMatches([]); await fetchData(); }
+  }
+
+  async function openHostManager(agency: Agency) {
+    setAssignAgency(agency);
+    const { data } = await supabase
+      .from('agency_members')
+      .select('host_id,status,joined_at,host:profiles!agency_members_host_id_fkey(full_name,display_id,avatar_url)')
+      .eq('agency_id', agency.id)
+      .in('status', ['active', 'leave_pending'])
+      .order('joined_at', { ascending: false });
+    setAgencyMembers((data as any[]) || []);
+  }
+
+  async function releaseUser(member: AgencyMember) {
+    if (!window.confirm(`Release ${member.host?.full_name || 'this host'} from ${assignAgency?.name}?`)) return;
+    setActionBusy(member.host_id);
+    const reason = window.prompt('Optional release note') || null;
+    const { data, error } = await supabase.rpc('admin_release_agency_host', {
+      p_user_id: member.host_id, p_reason: reason,
+    });
+    setActionBusy(null);
+    if (error || !data?.success) alert(data?.message || error?.message || 'Release failed');
+    else if (assignAgency) { await openHostManager(assignAgency); await fetchData(); }
   }
 
   async function updateStatus(id: string, status: string) {
@@ -150,6 +231,38 @@ export default function AgenciesPage() {
       </div>
 
       <div className="glass-card overflow-hidden">
+        <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-black text-white">Host Applications</h3>
+            <p className="text-xs text-gray-500">Only dashboard admins can approve agency membership.</p>
+          </div>
+          <span className="rounded-full bg-pink-500/15 text-pink-300 px-3 py-1 text-xs font-bold">{requests.length} pending</span>
+        </div>
+        {requests.length === 0 ? <p className="p-8 text-center text-sm text-gray-500">No pending host applications.</p> : (
+          <div className="divide-y divide-white/5">
+            {requests.map((request) => (
+              <div key={request.id} className="p-5 flex items-center gap-4 flex-wrap">
+                <div className="w-10 h-10 rounded-full bg-violet-500/20 flex items-center justify-center font-black text-white">{request.user?.full_name?.[0]?.toUpperCase() || 'U'}</div>
+                <div className="flex-1 min-w-[180px]">
+                  <p className="font-bold text-white">{request.user?.full_name || 'User'} <span className="font-mono text-[10px] text-gray-500">ID {request.user?.display_id}</span></p>
+                  <p className="text-xs text-gray-400">Requests <b className="text-cyan-300">{request.agency?.name}</b> · {new Date(request.created_at).toLocaleString()}</p>
+                  {request.applicant_note ? <p className="text-xs text-gray-500 mt-1">{request.applicant_note}</p> : null}
+                </div>
+                <select id={`agency-${request.id}`} defaultValue={request.agency_id} className="bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-xs text-white">
+                  {agencies.filter(a => a.status === 'verified').map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>
+                <button disabled={actionBusy === request.id} onClick={() => {
+                  const el = document.getElementById(`agency-${request.id}`) as HTMLSelectElement | null;
+                  void reviewRequest(request, true, el?.value);
+                }} className="px-3 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 text-xs font-bold disabled:opacity-50">Approve</button>
+                <button disabled={actionBusy === request.id} onClick={() => void reviewRequest(request, false)} className="px-3 py-2 rounded-lg bg-rose-500/15 text-rose-300 text-xs font-bold disabled:opacity-50">Reject</button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="glass-card overflow-hidden">
         <table className="w-full text-left">
           <thead>
             <tr className="bg-white/5 text-gray-500 text-xs uppercase tracking-widest">
@@ -208,6 +321,11 @@ export default function AgenciesPage() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex justify-end gap-2">
+                      {agency.status === 'verified' && (
+                        <button className="p-2 hover:bg-cyan-400/10 rounded-lg text-gray-400 hover:text-cyan-400" onClick={() => void openHostManager(agency)} title="Manage hosts">
+                          <UserPlus size={16} />
+                        </button>
+                      )}
                       {agency.status !== 'verified' && (
                         <button
                           className="p-2 hover:bg-green-400/10 rounded-lg text-gray-400 hover:text-green-400 transition-all"
@@ -243,6 +361,21 @@ export default function AgenciesPage() {
           </tbody>
         </table>
       </div>
+
+      {assignAgency && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+          <div className="w-full max-w-lg rounded-2xl bg-[#1E1A34] border border-white/10 p-6">
+            <div className="flex items-center justify-between mb-4"><div><h3 className="text-xl font-black text-white">Manage hosts</h3><p className="text-xs text-gray-500">{assignAgency.name}</p></div><button onClick={() => setAssignAgency(null)}><X className="text-gray-400" /></button></div>
+            {agencyMembers.length ? <div className="mb-5"><p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-2">Current hosts</p><div className="space-y-2 max-h-40 overflow-y-auto">{agencyMembers.map((member) => <div key={member.host_id} className="p-3 rounded-xl bg-white/5 flex items-center justify-between gap-3"><div><p className="text-sm text-white font-bold">{member.host?.full_name || 'Unknown user'}</p><p className="text-[11px] text-gray-500">ID {member.host?.display_id} {member.status === 'leave_pending' ? '· requested release' : ''}</p></div><button disabled={actionBusy === member.host_id} onClick={() => void releaseUser(member)} className="text-xs font-bold text-red-400 hover:text-red-300 disabled:opacity-40">Release</button></div>)}</div></div> : null}
+            <p className="text-[11px] font-black uppercase tracking-widest text-gray-500 mb-2">Add or transfer host</p>
+            <input autoFocus value={userQuery} onChange={(e) => void searchUsers(e.target.value)} placeholder="Search name or exact user ID" className="w-full bg-[#0E111E] border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-pink-500" />
+            <div className="mt-3 space-y-2 max-h-72 overflow-y-auto">
+              {userMatches.map((profile) => <button key={profile.id} disabled={actionBusy === profile.id} onClick={() => void assignUser(profile.id)} className="w-full text-left p-3 rounded-xl bg-white/5 hover:bg-white/10 flex justify-between disabled:opacity-50"><span className="text-white font-bold">{profile.full_name}</span><span className="text-xs text-gray-500">ID {profile.display_id}{profile.agency_id ? ' · transfer' : ''}</span></button>)}
+              {userQuery.trim().length >= 2 && userMatches.length === 0 ? <p className="text-center text-sm text-gray-500 py-6">No eligible users found.</p> : null}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

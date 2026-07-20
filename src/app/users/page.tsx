@@ -12,12 +12,19 @@ export default function UsersPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [users, setUsers] = useState<any[]>([]);
   const [commentTags, setCommentTags] = useState<any[]>([]);
+  const [cosmetics, setCosmetics] = useState<any[]>([]);
+  const [grantKind, setGrantKind] = useState<'frame'|'intro'>('frame');
+  const [grantItem, setGrantItem] = useState('');
+  const [grantDays, setGrantDays] = useState('');
+  const [grantPermanent, setGrantPermanent] = useState(false);
+  const [grantEquip, setGrantEquip] = useState(true);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState<boolean | null>(null);
 
   useEffect(() => {
     fetchUsers();
     fetchCommentTags();
+    fetchCosmetics();
     checkConnection();
   }, []);
 
@@ -28,6 +35,20 @@ export default function UsersPage() {
       .order('display_order')
       .order('name');
     if (!error) setCommentTags(data || []);
+  }
+
+  async function fetchCosmetics() {
+    const [frames,intros]=await Promise.all([
+      supabase.from('profile_frames').select('id,name,validity_days,access_scope').order('display_order'),
+      supabase.from('mall_intro_items').select('id,name,validity_days,access_scope').order('display_order'),
+    ]);
+    setCosmetics([...(frames.data||[]).map(x=>({...x,kind:'frame'})),...(intros.data||[]).map(x=>({...x,kind:'intro'}))]);
+  }
+
+  async function grantCosmetic() {
+    if(!editingUser||!grantItem)return;
+    const {data,error}=await supabase.rpc('admin_grant_cosmetic',{p_user_id:editingUser.id,p_kind:grantKind,p_item_id:grantItem,p_days:grantPermanent?null:(grantDays?Number(grantDays):null),p_permanent:grantPermanent,p_equip:grantEquip});
+    if(error||!data?.success)alert(data?.message||error?.message||'Grant failed'); else {alert('Cosmetic granted successfully');setGrantItem('');setGrantDays('');}
   }
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -159,7 +180,7 @@ export default function UsersPage() {
       // name (both indexed).
       let usersResponse: { data: any[] | null; error: { message?: string } | null } = await supabase
         .from('profiles')
-        .select('id, display_id, full_name, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, comment_tag_id, created_at')
+        .select('id, display_id, full_name, nickname, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, comment_tag_id, created_at')
         .order('created_at', { ascending: false })
         .limit(200);
 
@@ -246,6 +267,15 @@ export default function UsersPage() {
         }
       } else {
         if (isSuperAdmin) {
+          const { data: nicknameResult, error: nicknameError } = await supabase.rpc('admin_set_user_nickname', {
+            p_user_id: editingUser.id,
+            p_nickname: editingUser.nickname?.trim() || null,
+          });
+          if (nicknameError || !nicknameResult?.success) {
+            alert('Profile saved, but nickname could not be updated: ' + (nicknameError?.message || nicknameResult?.message || 'Unknown error'));
+            setLoading(false);
+            return;
+          }
           const { data: tagResult, error: tagError } = await supabase.rpc('admin_set_user_comment_tag', {
             p_user_id: editingUser.id,
             p_tag_id: editingUser.comment_tag_id || null,
@@ -838,6 +868,12 @@ export default function UsersPage() {
                 />
               </div>
 
+              {isSuperAdmin && <div>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Nickname Badge</label>
+                <input type="text" maxLength={24} className="w-full bg-[#0E111E] border border-[#251B45] rounded-xl px-4 py-3 text-white focus:outline-none focus:border-violet-500" value={editingUser.nickname || ''} onChange={(e)=>setEditingUser({...editingUser,nickname:e.target.value})} placeholder="Leave empty to remove" />
+                <p className="mt-1 text-[10px] text-gray-500">2–24 characters; duplicate nicknames are allowed.</p>
+              </div>}
+
               {isSuperAdmin && (
                 <div>
                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block mb-2">Permanent Comment Tag</label>
@@ -877,6 +913,14 @@ export default function UsersPage() {
                   )}
                 </div>
               )}
+
+              {isSuperAdmin && <div className="rounded-xl border border-white/10 bg-black/10 p-3 space-y-2">
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest block">Grant Frame or Intro</label>
+                <div className="grid grid-cols-2 gap-2"><select className="bg-[#0E111E] border border-[#251B45] rounded-lg px-2 py-2 text-white text-xs" value={grantKind} onChange={e=>{setGrantKind(e.target.value as 'frame'|'intro');setGrantItem('')}}><option value="frame">Profile frame</option><option value="intro">Mall intro</option></select><select className="bg-[#0E111E] border border-[#251B45] rounded-lg px-2 py-2 text-white text-xs" value={grantItem} onChange={e=>setGrantItem(e.target.value)}><option value="">Choose item</option>{cosmetics.filter(c=>c.kind===grantKind).map(c=><option key={c.id} value={c.id}>{c.name}{c.access_scope==='admin_only'?' · Exclusive':''}</option>)}</select></div>
+                <input type="number" min={1} disabled={grantPermanent} value={grantDays} onChange={e=>setGrantDays(e.target.value)} placeholder="Custom days (empty = catalog duration)" className="w-full bg-[#0E111E] border border-[#251B45] rounded-lg px-3 py-2 text-white text-xs disabled:opacity-40"/>
+                <div className="flex gap-4 text-xs text-gray-400"><label><input type="checkbox" checked={grantPermanent} onChange={e=>setGrantPermanent(e.target.checked)}/> Permanent</label><label><input type="checkbox" checked={grantEquip} onChange={e=>setGrantEquip(e.target.checked)}/> Equip immediately</label></div>
+                <button type="button" disabled={!grantItem} onClick={()=>void grantCosmetic()} className="w-full py-2 rounded-lg bg-violet-500/20 text-violet-200 font-bold text-xs disabled:opacity-40">Grant cosmetic</button>
+              </div>}
 
               {isSuperAdmin && (
                 <div className="grid grid-cols-2 gap-4">

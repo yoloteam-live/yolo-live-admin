@@ -25,6 +25,7 @@ type Settings = {
   bulk_diamond_bdt_per_1000: number;   // admin → reseller/agency price
   sell_diamond_bdt_per_1000: number;   // reseller/agency → end-user price
   host_payout_bdt_per_1000:  number;   // agency → host payout per 1000 beans
+  host_hour_reward: { enabled: boolean; beans: number; minutes: number };
 };
 
 const DEFAULTS: Settings = {
@@ -42,6 +43,7 @@ const DEFAULTS: Settings = {
   bulk_diamond_bdt_per_1000: 10,
   sell_diamond_bdt_per_1000: 11,
   host_payout_bdt_per_1000:  9,
+  host_hour_reward: { enabled: true, beans: 6000, minutes: 60 },
 };
 
 export default function SettingsPage() {
@@ -237,6 +239,15 @@ export default function SettingsPage() {
             <li>Agency pays host: <b className="text-white">৳{(settings.host_payout_bdt_per_1000 * 100).toLocaleString()}</b> per lakh beans</li>
             <li>Reseller / agency margin: <b className="text-white">৳{((settings.sell_diamond_bdt_per_1000 - settings.bulk_diamond_bdt_per_1000) * 100).toLocaleString()}</b> per lakh diamonds</li>
           </ul>
+        </div>
+      </div>
+
+      <div className="glass-card p-6">
+        <div className="flex items-center gap-3 mb-6"><DollarSign className="text-amber-400" size={24}/><div><h3 className="text-xl font-bold text-white">Daily Host Live Reward</h3><p className="text-xs text-gray-500">Cumulative video time, reset at midnight Asia/Dhaka. Audio does not count.</p></div></div>
+        <Toggle label="Reward enabled" desc="Credit each eligible host at most once per Bangladesh calendar day." value={settings.host_hour_reward?.enabled !== false} onChange={(v)=>setField('host_hour_reward',{...(settings.host_hour_reward||DEFAULTS.host_hour_reward),enabled:v})}/>
+        <div className="grid md:grid-cols-2 gap-5 mt-5">
+          <Field label="Reward beans" type="number" value={String(settings.host_hour_reward?.beans ?? 6000)} onChange={(v)=>setField('host_hour_reward',{...(settings.host_hour_reward||DEFAULTS.host_hour_reward),beans:Math.max(0,parseInt(v)||0)})}/>
+          <Field label="Required video minutes" type="number" value={String(settings.host_hour_reward?.minutes ?? 60)} onChange={(v)=>setField('host_hour_reward',{...(settings.host_hour_reward||DEFAULTS.host_hour_reward),minutes:Math.max(1,parseInt(v)||60)})}/>
         </div>
       </div>
 

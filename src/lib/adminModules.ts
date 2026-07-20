@@ -12,6 +12,7 @@ export const ADMIN_MODULES: AdminModule[] = [
   { key: 'messages', name: 'Messages', href: '/messages' },
   { key: 'users', name: 'Users', href: '/users' },
   { key: 'applications', name: 'Applications', href: '/applications' },
+  { key: 'applications', name: 'Nickname Requests', href: '/nickname-applications' },
   { key: 'reports', name: 'User Reports', href: '/reports' },
   { key: 'topups', name: 'Top-Up Approvals', href: '/topups' },
   { key: 'agency_stock_requests', name: 'Agency Stock Requests', href: '/stock-requests' },
