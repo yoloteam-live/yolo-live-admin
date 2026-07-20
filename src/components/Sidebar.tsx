@@ -1,5 +1,6 @@
 "use client";
 import Link from 'next/link';
+import Image from 'next/image';
 import { useRouter, usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
@@ -157,11 +158,21 @@ export default function Sidebar() {
 
   return (
     <aside className="w-64 h-full bg-[#1E1A34] border-r border-[#251B45] flex flex-col">
-      <div className="p-6">
-        <h1 className="text-2xl font-black gradient-text">CARE LIVE ADMIN</h1>
-        <p className="text-[10px] text-gray-500 font-bold tracking-widest mt-1">
-          {access?.role?.replace('_', ' ').toUpperCase() || 'ADMIN PANEL'}
-        </p>
+      <div className="p-5 flex items-center gap-3">
+        <Image
+          src="/popular-live-logo.png"
+          alt="Popular Live"
+          width={52}
+          height={52}
+          priority
+          className="h-[52px] w-[52px] rounded-lg object-cover"
+        />
+        <div className="min-w-0">
+          <h1 className="text-lg font-black text-white leading-tight">POPULAR LIVE</h1>
+          <p className="text-[10px] text-gray-500 font-bold tracking-widest mt-1">
+            {access?.role?.replace('_', ' ').toUpperCase() || 'ADMIN PANEL'}
+          </p>
+        </div>
       </div>
 
       <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">

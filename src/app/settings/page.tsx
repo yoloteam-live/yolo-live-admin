@@ -29,7 +29,7 @@ type Settings = {
 };
 
 const DEFAULTS: Settings = {
-  platform_name: 'Care Live',
+  platform_name: 'Popular Live',
   support_email: 'support@yolo.live',
   signup_enabled: true,
   live_enabled: true,
