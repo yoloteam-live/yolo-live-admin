@@ -1,7 +1,8 @@
 "use client";
 import { useState } from 'react';
+import Image from 'next/image';
 import { useRouter } from 'next/navigation';
-import { Loader2, Shield, UserRound, Lock } from 'lucide-react';
+import { Loader2, UserRound, Lock } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
@@ -85,10 +86,15 @@ export default function LoginPage() {
     <div className="min-h-screen bg-[#0E111E] flex items-center justify-center p-6">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-500 to-purple-600 mb-4 shadow-lg shadow-pink-500/20">
-            <Shield size={32} className="text-white" />
-          </div>
-          <h1 className="text-3xl font-black text-white">Care Live Super Admin</h1>
+          <Image
+            src="/popular-live-logo.png"
+            alt="Popular Live"
+            width={104}
+            height={104}
+            priority
+            className="mx-auto mb-5 h-[104px] w-[104px] rounded-lg object-cover shadow-xl shadow-black/30"
+          />
+          <h1 className="text-3xl font-black text-white">Popular Live Admin</h1>
           <p className="text-gray-500 text-sm mt-2">Sign in with your admin credentials</p>
         </div>
 

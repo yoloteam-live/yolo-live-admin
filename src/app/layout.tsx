@@ -7,8 +7,12 @@ import AdminShell from "@/components/AdminShell";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Care Live Super Admin",
-  description: "Advanced Management Control Panel",
+  title: "Popular Live Admin",
+  description: "Popular Live management control panel",
+  icons: {
+    icon: "/popular-live-logo.png",
+    apple: "/popular-live-logo.png",
+  },
 };
 
 export default function RootLayout({
