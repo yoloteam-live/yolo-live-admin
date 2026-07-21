@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Settings, Shield, Save, Loader2, CheckCircle2, AlertTriangle, DollarSign,
+  Settings, Shield, Save, Loader2, CheckCircle2, AlertTriangle, DollarSign, Download, ExternalLink,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
@@ -26,6 +26,10 @@ type Settings = {
   sell_diamond_bdt_per_1000: number;   // reseller/agency → end-user price
   host_payout_bdt_per_1000:  number;   // agency → host payout per 1000 beans
   host_hour_reward: { enabled: boolean; beans: number; minutes: number };
+  latest_app_version: string;
+  min_supported_app_version: string;
+  store_url_android: string;
+  app_update_notes: string;
 };
 
 const DEFAULTS: Settings = {
@@ -44,6 +48,10 @@ const DEFAULTS: Settings = {
   sell_diamond_bdt_per_1000: 11,
   host_payout_bdt_per_1000:  9,
   host_hour_reward: { enabled: true, beans: 6000, minutes: 60 },
+  latest_app_version: '1.1.19',
+  min_supported_app_version: '1.1.19',
+  store_url_android: '',
+  app_update_notes: '',
 };
 
 export default function SettingsPage() {
@@ -149,6 +157,64 @@ export default function SettingsPage() {
             onChange={(v) => setField('support_email', v)}
             type="email"
           />
+        </div>
+      </div>
+
+      {/* Android direct APK updates. APK assets are hosted in GitHub
+          Releases because Supabase Free limits a single file to 50 MB,
+          while the production APK is currently about 184 MB. */}
+      <div className="glass-card p-6">
+        <div className="flex items-center gap-3 mb-3">
+          <Download className="text-emerald-400" size={24} />
+          <div>
+            <h3 className="text-xl font-bold text-white">Android App Updates</h3>
+            <p className="text-xs text-gray-500">Publish a direct APK download to every installed Green Live app.</p>
+          </div>
+        </div>
+        <div className="mb-5 rounded-xl border border-emerald-500/15 bg-emerald-500/5 p-4 text-xs text-gray-400 leading-relaxed">
+          Upload the signed APK as an asset on a public GitHub Release, right-click the APK asset and copy its direct link, then paste it below.
+          GitHub Releases is free for this APK size. The APK must use the same package and signing key, and its versionCode must be higher.
+          <a href="https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository" target="_blank" rel="noreferrer" className="ml-2 inline-flex items-center gap-1 font-bold text-emerald-300 hover:text-emerald-200">
+            GitHub release instructions <ExternalLink size={11}/>
+          </a>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Field
+            label="Latest APK Version"
+            hint="The version shown in the update popup, for example 1.1.20."
+            value={settings.latest_app_version}
+            onChange={(v) => setField('latest_app_version', v.trim())}
+          />
+          <Field
+            label="Minimum Supported Version"
+            hint="Set this equal to Latest APK Version to force every older app to update. Keep it lower for an optional update."
+            value={settings.min_supported_app_version}
+            onChange={(v) => setField('min_supported_app_version', v.trim())}
+          />
+        </div>
+        <div className="mt-5">
+          <Field
+            label="Direct APK URL"
+            type="url"
+            hint="Must be the direct .apk asset URL, normally https://github.com/.../releases/download/.../green-live.apk"
+            value={settings.store_url_android}
+            onChange={(v) => setField('store_url_android', v.trim())}
+          />
+        </div>
+        <div className="mt-5">
+          <label className="text-xs font-bold text-gray-500 uppercase tracking-widest block mb-2">Update Notes</label>
+          <textarea
+            className="w-full bg-[#1A1230] border border-[#251B45] rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500 min-h-[90px]"
+            placeholder="What changed in this update?"
+            value={settings.app_update_notes}
+            onChange={(e) => setField('app_update_notes', e.target.value)}
+          />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2 text-[11px]">
+          <span className="rounded-full bg-white/5 px-3 py-1.5 text-gray-400">Current published: v{settings.latest_app_version || '—'}</span>
+          <span className={`rounded-full px-3 py-1.5 font-bold ${settings.latest_app_version && settings.min_supported_app_version === settings.latest_app_version ? 'bg-red-500/10 text-red-300' : 'bg-blue-500/10 text-blue-300'}`}>
+            {settings.latest_app_version && settings.min_supported_app_version === settings.latest_app_version ? 'Required update' : 'Optional update'}
+          </span>
         </div>
       </div>
 
