@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { optimizeImageFile } from "@/lib/imageOptimizer";
+import { uploadAdminMedia } from "@/lib/adminMediaUpload";
 import {
   Image as ImageIcon, Plus, Trash2, Upload, Loader2, X, Link as LinkIcon,
   CheckCircle2, XCircle, Save, ArrowUp, ArrowDown,
@@ -70,17 +71,15 @@ export default function BannersPage() {
         alert("Banner is still larger than 350 KB after optimization. Please use a simpler or smaller image.");
         return null;
       }
-      const safeName = optimized.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const path = `${Date.now()}-${safeName}`;
-      const { error } = await supabase.storage
-        .from("banners")
-        .upload(path, optimized, { upsert: false, cacheControl: "31536000", contentType: optimized.type });
-      if (error) {
-        alert("Upload failed: " + error.message);
-        return null;
-      }
-      const { data } = supabase.storage.from("banners").getPublicUrl(path);
-      return data.publicUrl;
+      return await uploadAdminMedia({
+        bucket: 'banners',
+        moduleKey: 'banners',
+        file: optimized,
+        cacheControl: '31536000',
+      });
+    } catch (error: unknown) {
+      alert("Upload failed: " + (error instanceof Error ? error.message : "Unknown upload error"));
+      return null;
     } finally {
       setUploading(false);
     }
@@ -89,10 +88,13 @@ export default function BannersPage() {
   async function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = await uploadFile(file);
-    if (!url || !editing) return;
-    setEditing({ ...editing, image_url: url });
-    if (fileInputRef.current) fileInputRef.current.value = "";
+    try {
+      const url = await uploadFile(file);
+      if (!url || !editing) return;
+      setEditing({ ...editing, image_url: url });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   }
 
   async function save() {

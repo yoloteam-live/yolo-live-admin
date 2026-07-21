@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { uploadAdminMedia } from '@/lib/adminMediaUpload';
 import {
   Sparkles, Plus, Trash2, Upload, Loader2, X, Calendar, Eye,
   CheckCircle2, XCircle, Image as ImageIcon, FileJson, Clock,
@@ -121,14 +122,39 @@ export default function SplashPage() {
     try {
       const ext = file.name.split('.').pop()?.toLowerCase() || '';
       const type: MediaType = ext === 'json' ? 'lottie' : 'image';
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const path = `${Date.now()}-${safeName}`;
-      const { error } = await supabase.storage
-        .from('splashes')
-        .upload(path, file, { upsert: false, cacheControl: '3600' });
-      if (error) { alert('Upload failed: ' + error.message); return null; }
-      const { data } = supabase.storage.from('splashes').getPublicUrl(path);
-      return { url: data.publicUrl, type };
+      const allowedImage = ['image/png', 'image/jpeg', 'image/webp'].includes(file.type);
+      if (type === 'image' && !allowedImage) {
+        alert('Only PNG, JPG, WebP, or Lottie JSON files are accepted.');
+        return null;
+      }
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Splash media must be 5 MB or smaller.');
+        return null;
+      }
+
+      let uploadFile = file;
+      if (type === 'lottie') {
+        try {
+          JSON.parse(await file.text());
+        } catch {
+          alert('The selected Lottie file is not valid JSON.');
+          return null;
+        }
+        if (file.type !== 'application/json') {
+          uploadFile = new File([file], file.name, { type: 'application/json' });
+        }
+      }
+
+      const url = await uploadAdminMedia({
+        bucket: 'splashes',
+        moduleKey: 'splash',
+        file: uploadFile,
+        cacheControl: '3600',
+      });
+      return { url, type };
+    } catch (error: unknown) {
+      alert('Upload failed: ' + (error instanceof Error ? error.message : 'Unknown upload error'));
+      return null;
     } finally {
       setUploading(false);
     }
@@ -137,10 +163,13 @@ export default function SplashPage() {
   async function handleFilePick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const result = await uploadFile(file);
-    if (!result || !editing) return;
-    setEditing({ ...editing, media_url: result.url, media_type: result.type });
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    try {
+      const result = await uploadFile(file);
+      if (!result || !editing) return;
+      setEditing({ ...editing, media_url: result.url, media_type: result.type });
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   }
 
   async function save() {
