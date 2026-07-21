@@ -89,7 +89,7 @@ const navItems: NavItem[] = [
   { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const router = useRouter();
   const { access, can } = useAdminAccess();
@@ -157,7 +157,7 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="w-64 h-full bg-[#1E1A34] border-r border-[#251B45] flex flex-col">
+    <aside className="h-full w-full bg-[#1E1A34] border-r border-[#251B45] flex flex-col">
       <div className="p-5 flex items-center gap-3">
         <Image
           src="/popular-live-logo.png"
@@ -185,6 +185,7 @@ export default function Sidebar() {
             <Link
               key={item.name}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200",
                 isActive

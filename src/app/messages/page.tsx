@@ -320,9 +320,9 @@ export default function MessagesPage() {
   const allUnread = conversations.reduce((acc, c) => acc + c.unread, 0);
 
   return (
-    <div className="flex h-[calc(100vh-48px)] gap-4">
+    <div className="flex h-[calc(100dvh-5.5rem)] min-h-0 gap-3 lg:h-[calc(100vh-48px)] lg:gap-4">
       {/* Conversations sidebar */}
-      <div className="w-96 bg-[#1E1A34] border border-[#251B45] rounded-2xl flex flex-col overflow-hidden">
+      <div className={`${activeConv ? 'hidden lg:flex' : 'flex'} w-full lg:w-96 bg-[#1E1A34] border border-[#251B45] rounded-2xl flex-col overflow-hidden`}>
         <div className="p-4 border-b border-[#251B45]">
           <h2 className="text-xl font-bold text-white mb-3">Inbox</h2>
           <div className="relative">
@@ -421,7 +421,7 @@ export default function MessagesPage() {
       </div>
 
       {/* Active thread */}
-      <div className="flex-1 bg-[#1E1A34] border border-[#251B45] rounded-2xl flex flex-col overflow-hidden">
+      <div className={`${activeConv ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1 bg-[#1E1A34] border border-[#251B45] rounded-2xl flex-col overflow-hidden`}>
         {!activeConv ? (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500">
             <MessageSquare size={56} className="mb-3 opacity-25" />
