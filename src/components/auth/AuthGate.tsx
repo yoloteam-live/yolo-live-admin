@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
+import { Loader2, LogOut, ShieldAlert } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import type { Session } from '@supabase/supabase-js';
 import { AdminAccess, AdminAccessProvider, DashboardRole } from '@/lib/adminAccess';
@@ -99,7 +99,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
           const currentModule = moduleForPath(pathname);
           if (currentModule && !hasPermission(nextAccess.role, nextAccess.permissions, currentModule.key)) {
             const first = ADMIN_MODULES.find((module) => hasPermission(nextAccess.role, nextAccess.permissions, module.key));
-            router.replace(first?.href || '/login');
+            // An active staff account can intentionally have every module
+            // revoked. Keep its authenticated session alive and show the
+            // no-access state below instead of bouncing / -> /login and
+            // making the user appear to be automatically logged out.
+            if (first) router.replace(first.href);
           }
         }
       }
@@ -176,6 +180,38 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!access) {
     return null; // redirecting
+  }
+
+  const firstPermittedModule = ADMIN_MODULES.find((module) =>
+    hasPermission(access.role, access.permissions, module.key),
+  );
+
+  if (!firstPermittedModule) {
+    return (
+      <AdminAccessProvider value={access}>
+        <div className="min-h-screen bg-[#0E111E] flex items-center justify-center p-6">
+          <div className="w-full max-w-lg rounded-2xl border border-amber-500/25 bg-[#1E1A34] p-7 text-center shadow-2xl">
+            <ShieldAlert className="mx-auto mb-4 text-amber-400" size={44} />
+            <h1 className="text-2xl font-black text-white">No dashboard modules assigned</h1>
+            <p className="mt-3 text-sm leading-6 text-gray-400">
+              {access.fullName}, your <span className="capitalize text-gray-200">{access.role.replace('_', ' ')}</span> account is active,
+              but an administrator has not assigned any dashboard pages yet.
+            </p>
+            <p className="mt-2 text-xs text-gray-500">Ask a super admin to add module access from Staff Accounts.</p>
+            <button
+              type="button"
+              onClick={async () => {
+                await supabase.auth.signOut().catch(() => {});
+                router.replace('/login');
+              }}
+              className="mx-auto mt-6 flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-white hover:bg-white/10"
+            >
+              <LogOut size={16} /> Sign out
+            </button>
+          </div>
+        </div>
+      </AdminAccessProvider>
+    );
   }
 
   return <AdminAccessProvider value={access}>{children}</AdminAccessProvider>;
