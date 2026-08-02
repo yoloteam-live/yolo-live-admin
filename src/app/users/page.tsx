@@ -1,8 +1,10 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { Search, Filter, Edit2, Shield, Ban, Diamond, Sparkles, CheckCircle2, XCircle, Loader2, Crown, UserMinus, Bell, BellOff, MessageSquare, MessageSquareOff, Trash2, AlertTriangle } from 'lucide-react';
+import { Search, Filter, Edit2, Shield, Ban, Diamond, Sparkles, CheckCircle2, XCircle, Loader2, Crown, UserMinus, Bell, BellOff, MessageSquare, MessageSquareOff, Trash2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
+
+const USERS_PAGE_SIZE = 50;
 
 export default function UsersPage() {
   // Managers can still see + ban users but can't move money or change
@@ -20,13 +22,22 @@ export default function UsersPage() {
   const [grantEquip, setGrantEquip] = useState(true);
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState<boolean | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalUsers, setTotalUsers] = useState(0);
 
   useEffect(() => {
-    fetchUsers();
     fetchCommentTags();
     fetchCosmetics();
     checkConnection();
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void fetchUsers(currentPage, searchTerm);
+    }, searchTerm.trim() ? 300 : 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, searchTerm]);
 
   async function fetchCommentTags() {
     const { data, error } = await supabase
@@ -95,6 +106,7 @@ export default function UsersPage() {
       return;
     }
     setUsers(users.filter(u => u.id !== deleteUser.id));
+    setTotalUsers((count) => Math.max(0, count - 1));
     setDeleteUser(null);
     setDeleteConfirmId('');
   }
@@ -122,7 +134,7 @@ export default function UsersPage() {
     );
     setDemoteUser(null);
     setDemoteReason('');
-    fetchUsers();
+    fetchUsers(currentPage, searchTerm);
   }
 
   async function promoteToAgencyOwner() {
@@ -158,7 +170,7 @@ export default function UsersPage() {
     setPromoteUser(null);
     setPromoteCode('');
     setPromoteName('');
-    fetchUsers();
+    fetchUsers(currentPage, searchTerm);
   }
 
   async function checkConnection() {
@@ -170,44 +182,64 @@ export default function UsersPage() {
     }
   }
 
-  async function fetchUsers() {
+  async function fetchUsers(page = currentPage, term = searchTerm) {
     setLoading(true);
     try {
-      // Bounded query — caps at 200 rows so the page loads instantly even
-      // when the platform has hundreds of thousands of users. Search/
-      // filter UI works on this in-memory window; if support needs a
-      // user past the window, they can search by display_id or full
-      // name (both indexed).
-      let usersResponse: { data: any[] | null; error: { message?: string } | null } = await supabase
+      const from = (page - 1) * USERS_PAGE_SIZE;
+      const to = from + USERS_PAGE_SIZE - 1;
+      const cleanTerm = term.trim();
+
+      let query = supabase
         .from('profiles')
-        .select('id, display_id, full_name, nickname, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, comment_tag_id, created_at')
-        .order('created_at', { ascending: false })
-        .limit(200);
+        .select('id, display_id, full_name, nickname, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, comment_tag_id, created_at', { count: 'exact' })
+        .order('created_at', { ascending: false });
+
+      if (cleanTerm) {
+        query = /^\d+$/.test(cleanTerm)
+          ? query.eq('display_id', Number(cleanTerm))
+          : query.ilike('full_name', `%${cleanTerm}%`);
+      }
+
+      let usersResponse: {
+        data: any[] | null;
+        error: { message?: string } | null;
+        count?: number | null;
+      } = await query.range(from, to);
 
       // Migration 126 may be applied a few minutes after this dashboard
       // deploy. Keep User Management operational during that window.
       if (usersResponse.error && /comment_tag_id/i.test(usersResponse.error.message || '')) {
-        usersResponse = await supabase
+        let fallbackQuery = supabase
           .from('profiles')
-          .select('id, display_id, full_name, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, created_at')
-          .order('created_at', { ascending: false })
-          .limit(200);
+          .select('id, display_id, full_name, avatar_url, role, status, diamonds, beans, is_banned, is_deleted, push_notifications_enabled, dm_notifications_enabled, created_at', { count: 'exact' })
+          .order('created_at', { ascending: false });
+
+        if (cleanTerm) {
+          fallbackQuery = /^\d+$/.test(cleanTerm)
+            ? fallbackQuery.eq('display_id', Number(cleanTerm))
+            : fallbackQuery.ilike('full_name', `%${cleanTerm}%`);
+        }
+
+        usersResponse = await fallbackQuery.range(from, to);
       }
 
-      const { data, error } = usersResponse;
+      const { data, error, count } = usersResponse;
 
       if (error) {
         console.error('users fetch:', error.message);
         setUsers([]);
+        setTotalUsers(0);
       } else {
         // No more fake fallback rows. An empty platform shows an empty
         // table (see the empty-state below), so admins see real state
         // and don't get mislead by fake "Robin Hood" sample data.
         setUsers(data || []);
+        setTotalUsers(count || 0);
       }
     } catch (e) {
       console.error(e);
       setUsers([]);
+      setTotalUsers(0);
     }
     setLoading(false);
   }
@@ -288,7 +320,7 @@ export default function UsersPage() {
         }
         setIsEditModalOpen(false);
         setEditingUser(null);
-        fetchUsers();
+        fetchUsers(currentPage, searchTerm);
         alert("Profile updated successfully!");
       }
     } catch (e: any) {
@@ -399,10 +431,9 @@ export default function UsersPage() {
     }
   }
 
-  const filteredUsers = users.filter(user => 
-    (user.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    user.display_id?.toString().includes(searchTerm))
-  );
+  const totalPages = Math.max(1, Math.ceil(totalUsers / USERS_PAGE_SIZE));
+  const pageStart = totalUsers === 0 ? 0 : (currentPage - 1) * USERS_PAGE_SIZE + 1;
+  const pageEnd = Math.min(totalUsers, currentPage * USERS_PAGE_SIZE);
 
   return (
     <div className="space-y-8">
@@ -431,10 +462,13 @@ export default function UsersPage() {
               placeholder="Search by ID or Name..." 
               className="bg-[#1E1A34] border border-[#251B45] rounded-xl pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-pink-500 w-64 text-white"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => {
+                setSearchTerm(e.target.value);
+                setCurrentPage(1);
+              }}
             />
           </div>
-          <button className="bg-[#1E1A34] border border-[#251B45] p-2 rounded-xl text-gray-400 hover:text-white transition-all" onClick={fetchUsers}>
+          <button className="bg-[#1E1A34] border border-[#251B45] p-2 rounded-xl text-gray-400 hover:text-white transition-all" onClick={() => fetchUsers(currentPage, searchTerm)}>
             {loading ? <Loader2 size={20} className="animate-spin" /> : <Filter size={20} />}
           </button>
         </div>
@@ -454,16 +488,16 @@ export default function UsersPage() {
             </tr>
           </thead>
           <tbody className="text-sm">
-            {!loading && filteredUsers.length === 0 && (
+            {!loading && users.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
-                  {users.length === 0
-                    ? 'No users yet — the profiles table is empty.'
-                    : 'No users match your filters.'}
+                  {searchTerm.trim()
+                    ? 'No users match your search.'
+                    : 'No users yet — the profiles table is empty.'}
                 </td>
               </tr>
             )}
-            {filteredUsers.map((user) => (
+            {users.map((user) => (
               <tr key={user.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-all group">
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
@@ -617,6 +651,32 @@ export default function UsersPage() {
             ))}
           </tbody>
         </table>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-6 py-4 border-t border-white/5 bg-white/[0.02]">
+          <p className="text-xs text-gray-500">
+            Showing <span className="text-white font-bold">{pageStart.toLocaleString()}</span>
+            {' '}to <span className="text-white font-bold">{pageEnd.toLocaleString()}</span>
+            {' '}of <span className="text-white font-bold">{totalUsers.toLocaleString()}</span> users
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              className="h-9 px-3 rounded-lg bg-[#1E1A34] border border-[#251B45] text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 text-xs font-bold"
+              disabled={loading || currentPage <= 1}
+              onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+            >
+              <ChevronLeft size={14} /> Previous
+            </button>
+            <span className="text-xs text-gray-400 px-2">
+              Page <span className="text-white font-bold">{currentPage.toLocaleString()}</span> / {totalPages.toLocaleString()}
+            </span>
+            <button
+              className="h-9 px-3 rounded-lg bg-[#1E1A34] border border-[#251B45] text-gray-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 text-xs font-bold"
+              disabled={loading || currentPage >= totalPages}
+              onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+            >
+              Next <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Promote to Agency Owner Modal */}
