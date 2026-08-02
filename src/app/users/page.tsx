@@ -5,6 +5,17 @@ import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
 
 const USERS_PAGE_SIZE = 50;
+const ROLE_FILTERS = [
+  { value: 'all', label: 'All roles' },
+  { value: 'user', label: 'Users' },
+  { value: 'host', label: 'Hosts' },
+  { value: 'agency_owner', label: 'Agencies' },
+  { value: 'reseller', label: 'Resellers' },
+  { value: 'moderator', label: 'Moderators' },
+  { value: 'manager', label: 'Managers' },
+  { value: 'admin', label: 'Admins' },
+  { value: 'super_admin', label: 'Super Admins' },
+];
 
 export default function UsersPage() {
   // Managers can still see + ban users but can't move money or change
@@ -24,6 +35,7 @@ export default function UsersPage() {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
+  const [roleFilter, setRoleFilter] = useState('all');
 
   useEffect(() => {
     fetchCommentTags();
@@ -33,11 +45,11 @@ export default function UsersPage() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      void fetchUsers(currentPage, searchTerm);
+      void fetchUsers(currentPage, searchTerm, roleFilter);
     }, searchTerm.trim() ? 300 : 0);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPage, searchTerm]);
+  }, [currentPage, searchTerm, roleFilter]);
 
   async function fetchCommentTags() {
     const { data, error } = await supabase
@@ -134,7 +146,7 @@ export default function UsersPage() {
     );
     setDemoteUser(null);
     setDemoteReason('');
-    fetchUsers(currentPage, searchTerm);
+    fetchUsers(currentPage, searchTerm, roleFilter);
   }
 
   async function promoteToAgencyOwner() {
@@ -170,7 +182,7 @@ export default function UsersPage() {
     setPromoteUser(null);
     setPromoteCode('');
     setPromoteName('');
-    fetchUsers(currentPage, searchTerm);
+    fetchUsers(currentPage, searchTerm, roleFilter);
   }
 
   async function checkConnection() {
@@ -182,7 +194,7 @@ export default function UsersPage() {
     }
   }
 
-  async function fetchUsers(page = currentPage, term = searchTerm) {
+  async function fetchUsers(page = currentPage, term = searchTerm, role = roleFilter) {
     setLoading(true);
     try {
       const from = (page - 1) * USERS_PAGE_SIZE;
@@ -199,6 +211,7 @@ export default function UsersPage() {
           ? query.eq('display_id', Number(cleanTerm))
           : query.ilike('full_name', `%${cleanTerm}%`);
       }
+      if (role !== 'all') query = query.eq('role', role);
 
       let usersResponse: {
         data: any[] | null;
@@ -219,6 +232,7 @@ export default function UsersPage() {
             ? fallbackQuery.eq('display_id', Number(cleanTerm))
             : fallbackQuery.ilike('full_name', `%${cleanTerm}%`);
         }
+        if (role !== 'all') fallbackQuery = fallbackQuery.eq('role', role);
 
         usersResponse = await fallbackQuery.range(from, to);
       }
@@ -320,7 +334,7 @@ export default function UsersPage() {
         }
         setIsEditModalOpen(false);
         setEditingUser(null);
-        fetchUsers(currentPage, searchTerm);
+        fetchUsers(currentPage, searchTerm, roleFilter);
         alert("Profile updated successfully!");
       }
     } catch (e: any) {
@@ -437,7 +451,7 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center flex-wrap gap-4">
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-3xl font-black text-white">User Management</h2>
@@ -454,7 +468,7 @@ export default function UsersPage() {
           </div>
           <p className="text-gray-500 mt-1">Monitor and control all accounts in your system.</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex gap-3 flex-wrap">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
             <input 
@@ -468,7 +482,19 @@ export default function UsersPage() {
               }}
             />
           </div>
-          <button className="bg-[#1E1A34] border border-[#251B45] p-2 rounded-xl text-gray-400 hover:text-white transition-all" onClick={() => fetchUsers(currentPage, searchTerm)}>
+          <select
+            className="bg-[#1E1A34] border border-[#251B45] rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-pink-500 text-white"
+            value={roleFilter}
+            onChange={(e) => {
+              setRoleFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+          >
+            {ROLE_FILTERS.map((role) => (
+              <option key={role.value} value={role.value}>{role.label}</option>
+            ))}
+          </select>
+          <button className="bg-[#1E1A34] border border-[#251B45] p-2 rounded-xl text-gray-400 hover:text-white transition-all" onClick={() => fetchUsers(currentPage, searchTerm, roleFilter)}>
             {loading ? <Loader2 size={20} className="animate-spin" /> : <Filter size={20} />}
           </button>
         </div>
@@ -491,8 +517,8 @@ export default function UsersPage() {
             {!loading && users.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
-                  {searchTerm.trim()
-                    ? 'No users match your search.'
+                  {searchTerm.trim() || roleFilter !== 'all'
+                    ? 'No users match your search/filter.'
                     : 'No users yet — the profiles table is empty.'}
                 </td>
               </tr>

@@ -55,6 +55,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
+  { name: 'Finance', href: '/finance', icon: Wallet },
   { name: 'Messages', href: '/messages', icon: MessageSquare, badgeKey: 'unread_dms' },
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Applications', href: '/applications', icon: Inbox },

@@ -9,6 +9,7 @@ export type AdminModule = {
 
 export const ADMIN_MODULES: AdminModule[] = [
   { key: 'overview', name: 'Overview', href: '/' },
+  { key: 'finance', name: 'Finance', href: '/finance' },
   { key: 'messages', name: 'Messages', href: '/messages' },
   { key: 'users', name: 'Users', href: '/users' },
   { key: 'applications', name: 'Applications', href: '/applications' },
