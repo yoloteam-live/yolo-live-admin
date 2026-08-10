@@ -5,9 +5,12 @@ import { Menu, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import Sidebar from './Sidebar';
 
+const PUBLIC_SECRET_ROUTES = ['/vltx-9q4r-aurora-ledger'];
+
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isLoginPage = pathname === '/login';
+  const isPublicSecretPage = PUBLIC_SECRET_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
@@ -17,7 +20,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     return () => { document.body.style.overflow = previousOverflow; };
   }, [mobileNavOpen]);
 
-  if (isLoginPage) {
+  if (isLoginPage || isPublicSecretPage) {
     return <>{children}</>;
   }
 
