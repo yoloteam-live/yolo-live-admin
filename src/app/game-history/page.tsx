@@ -20,7 +20,7 @@ type RoundRow = {
   user: { full_name: string; display_id: number; avatar_url: string | null } | null;
 };
 
-const ACTIVE_GAMES = ['greedy_lion', 'tin_patti_pro'] as const;
+const ACTIVE_GAMES = ['greedy_lion', 'tin_patti_pro', 'lucky_dice'] as const;
 const GAMES = ['all', ...ACTIVE_GAMES] as const;
 type GameKey = typeof GAMES[number];
 
@@ -178,7 +178,11 @@ export default function GameHistoryPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                        r.game_type === 'tin_patti_pro' ? 'bg-purple-500/15 text-purple-300' : 'bg-amber-500/15 text-amber-300'
+                        r.game_type === 'tin_patti_pro'
+                          ? 'bg-purple-500/15 text-purple-300'
+                          : r.game_type === 'lucky_dice'
+                            ? 'bg-emerald-500/15 text-emerald-300'
+                            : 'bg-amber-500/15 text-amber-300'
                       }`}>{r.game_type.replaceAll('_',' ')}</span>
                     </td>
                     <td className="px-4 py-3 text-white">

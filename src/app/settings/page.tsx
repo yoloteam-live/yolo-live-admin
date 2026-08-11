@@ -231,7 +231,7 @@ export default function SettingsPage() {
             value={settings.live_enabled} onChange={(v) => setField('live_enabled', v)} />
           <Toggle label="Gifting enabled" desc="Allow users to send gifts to broadcasters."
             value={settings.gifting_enabled} onChange={(v) => setField('gifting_enabled', v)} />
-          <Toggle label="Games enabled" desc="Allow Greedy Lion and Tin Patti Pro inside live rooms."
+          <Toggle label="Games enabled" desc="Allow Greedy Lion, Tin Patti Pro, and Lucky Dice Royale inside live rooms."
             value={settings.games_enabled} onChange={(v) => setField('games_enabled', v)} />
         </div>
       </div>

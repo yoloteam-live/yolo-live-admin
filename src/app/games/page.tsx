@@ -37,6 +37,8 @@ type GameSetting = {
     salad_max_per_day?: number;
     target_payout_min_percent?: number;
     target_payout_max_percent?: number;
+    bet_acceptance_grace_s?: number;
+    dice_animation_s?: number;
   } | null;
   _houseDisplayId?: string;
   _multipliersText?: string;
@@ -66,8 +68,21 @@ const TIN_PATTI_PRO_ITEMS = [
   { id: 'cake', label: 'Cake' },
 ];
 
+const LUCKY_DICE_ITEMS = [
+  { id: 'small', label: 'Small (4-10)', multiplier: 2 },
+  { id: 'big', label: 'Big (11-17)', multiplier: 2 },
+  { id: 'odd', label: 'Odd (no triple)', multiplier: 2 },
+  { id: 'even', label: 'Even (no triple)', multiplier: 2 },
+  { id: 'any_triple', label: 'Any Triple', multiplier: 31 },
+  { id: 'total_6', label: 'Total 6', multiplier: 15 },
+  { id: 'total_9', label: 'Total 9', multiplier: 7 },
+  { id: 'total_12', label: 'Total 12', multiplier: 7 },
+  { id: 'total_15', label: 'Total 15', multiplier: 15 },
+];
+
 const GLOBAL_PAYOUT_GAME_IDS = new Set(['greedy_lion', 'tin_patti_pro']);
-const APP_GAME_IDS = ['greedy_lion', 'tin_patti_pro'];
+const MANAGED_ROUND_GAME_IDS = new Set(['greedy_lion', 'tin_patti_pro', 'lucky_dice']);
+const APP_GAME_IDS = ['greedy_lion', 'tin_patti_pro', 'lucky_dice'];
 
 const DEFAULT_GLOBAL_RULES = {
   pizza_enabled: true,
@@ -84,13 +99,30 @@ function isGlobalPayoutGame(id: string) {
   return GLOBAL_PAYOUT_GAME_IDS.has(id);
 }
 
+function isManagedRoundGame(id: string) {
+  return MANAGED_ROUND_GAME_IDS.has(id);
+}
+
 function globalRules(game: GameSetting) {
   return { ...DEFAULT_GLOBAL_RULES, ...(game.special_result_rules || {}) };
 }
 
 function forcedResultItems(gameId: string) {
   if (gameId === 'tin_patti_pro') return TIN_PATTI_PRO_ITEMS;
+  if (gameId === 'lucky_dice') return LUCKY_DICE_ITEMS;
   return GREEDY_LION_ITEMS;
+}
+
+function specialRules(game: GameSetting) {
+  return game.special_result_rules || {};
+}
+
+function multiplierRows(game: GameSetting): Array<Record<string, unknown>> {
+  const fallback: Array<Record<string, unknown>> = game.id === 'lucky_dice'
+    ? LUCKY_DICE_ITEMS.map((item) => ({ id: item.id, label: item.label, m: item.multiplier }))
+    : [];
+  const value = game.multipliers;
+  return Array.isArray(value) && value.length > 0 ? value as Array<Record<string, unknown>> : fallback;
 }
 
 export default function GameControlPage() {
@@ -128,7 +160,7 @@ export default function GameControlPage() {
     console.log("Game Settings Data:", data);
 
     if (data) {
-      setSettings(data);
+      setSettings([...data].sort((a, b) => APP_GAME_IDS.indexOf(a.id) - APP_GAME_IDS.indexOf(b.id)));
       const houseIds = data
         .map((row: GameSetting) => row.house_profile_id)
         .filter(Boolean);
@@ -174,7 +206,7 @@ export default function GameControlPage() {
       alert('Multipliers field must be valid JSON.');
       return;
     }
-    if (isGlobalPayoutGame(game.id) && !game.house_profile_id) {
+    if (isManagedRoundGame(game.id) && !game.house_profile_id) {
       const displayId = String(game._houseDisplayId ?? '').trim();
       if (!displayId) {
         alert(`${gameDisplayName(game.id)} needs a payout-owner user id before saving.`);
@@ -197,12 +229,9 @@ export default function GameControlPage() {
       game.house_profile_id = owner.id;
       setHouseProfiles((current) => ({ ...current, [owner.id]: owner as HouseProfile }));
     }
-    if (isGlobalPayoutGame(game.id)) {
+    if (isManagedRoundGame(game.id)) {
       const duration = Number(game.round_duration_s ?? 30);
       const display = Number(game.result_display_s ?? 15);
-      const rules = globalRules(game);
-      const minPayout = Number(rules.target_payout_min_percent ?? 30);
-      const maxPayout = Number(rules.target_payout_max_percent ?? 40);
       if (!duration || duration < 5) {
         alert('Round duration must be at least 5 seconds.');
         return;
@@ -211,9 +240,14 @@ export default function GameControlPage() {
         alert('Result popup duration must be at least 3 seconds.');
         return;
       }
-      if (minPayout < 0 || maxPayout < minPayout) {
-        alert(`${gameDisplayName(game.id)} payout range must be 0 or higher, and max must be greater than or equal to min.`);
-        return;
+      if (isGlobalPayoutGame(game.id)) {
+        const rules = globalRules(game);
+        const minPayout = Number(rules.target_payout_min_percent ?? 30);
+        const maxPayout = Number(rules.target_payout_max_percent ?? 40);
+        if (minPayout < 0 || maxPayout < minPayout) {
+          alert(`${gameDisplayName(game.id)} payout range must be 0 or higher, and max must be greater than or equal to min.`);
+          return;
+        }
       }
     }
     const patch: Partial<GameSetting> = {
@@ -226,13 +260,13 @@ export default function GameControlPage() {
       daily_loss_cap: game.daily_loss_cap || null,
       multipliers:    parsedMultipliers,
     };
-    if (isGlobalPayoutGame(game.id)) {
+    if (isManagedRoundGame(game.id)) {
       patch.round_duration_s = Number(game.round_duration_s ?? 30);
       patch.result_display_s = Number(game.result_display_s ?? 15);
       patch.house_profile_id = game.house_profile_id;
       patch.forced_next_category = game.id === 'greedy_lion' && ['pizza', 'salad'].includes(game.forced_next_result || '') ? game.forced_next_result : null;
       patch.forced_next_result = game.forced_next_result || null;
-      patch.special_result_rules = globalRules(game);
+      patch.special_result_rules = game.id === 'lucky_dice' ? specialRules(game) : globalRules(game);
     }
     setSaving(true);
     const { error } = await supabase
@@ -249,6 +283,7 @@ export default function GameControlPage() {
   function gameDisplayName(id: string) {
     if (id === 'greedy_lion') return 'Greedy Lion';
     if (id === 'tin_patti_pro') return 'Tin Patti Pro';
+    if (id === 'lucky_dice') return 'Lucky Dice Royale';
     if (id === 'royal_feast') return 'Royal Feast';
     return id.replaceAll('_', ' ');
   }
@@ -322,11 +357,12 @@ export default function GameControlPage() {
                 <div className="flex items-center justify-between mb-4">
                   <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
                     <Settings2 size={14} className="text-pink-500" />
-                    {isGlobalPayoutGame(game.id) ? 'Target Payout Range' : 'Win Probability (RTP)'}
+                    {isGlobalPayoutGame(game.id) ? 'Target Payout Range' : game.id === 'lucky_dice' ? 'Result Model' : 'Win Probability (RTP)'}
                   </label>
                   <span className="text-2xl font-black text-pink-500">
                     {isGlobalPayoutGame(game.id)
                       ? `${globalRules(game).target_payout_min_percent}-${globalRules(game).target_payout_max_percent}%`
+                      : game.id === 'lucky_dice' ? 'SERVER RNG'
                       : `${game.win_chance_percent}%`}
                   </span>
                 </div>
@@ -366,6 +402,12 @@ export default function GameControlPage() {
                       />
                     </div>
                   </div>
+                ) : game.id === 'lucky_dice' ? (
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-[#0E111E] rounded-lg p-3 text-center"><p className="text-[10px] text-gray-500 uppercase font-bold">Dice</p><p className="text-white font-black">3</p></div>
+                    <div className="bg-[#0E111E] rounded-lg p-3 text-center"><p className="text-[10px] text-gray-500 uppercase font-bold">Faces</p><p className="text-white font-black">6</p></div>
+                    <div className="bg-[#0E111E] rounded-lg p-3 text-center"><p className="text-[10px] text-gray-500 uppercase font-bold">Authority</p><p className="text-green-300 font-black">Server</p></div>
+                  </div>
                 ) : (
                   <input 
                     type="range" 
@@ -382,10 +424,10 @@ export default function GameControlPage() {
                 
                 <div className="flex justify-between mt-4">
                   <span className="text-[10px] font-bold text-red-500 uppercase tracking-widest">
-                    {isGlobalPayoutGame(game.id) ? 'Lower Payout' : 'Greedy (Admin Wins)'}
+                    {isGlobalPayoutGame(game.id) ? 'Lower Payout' : game.id === 'lucky_dice' ? 'Fixed payout table' : 'Greedy (Admin Wins)'}
                   </span>
                   <span className="text-[10px] font-bold text-green-500 uppercase tracking-widest">
-                    {isGlobalPayoutGame(game.id) ? 'Higher Payout' : 'Giving (User Wins)'}
+                    {isGlobalPayoutGame(game.id) ? 'Higher Payout' : game.id === 'lucky_dice' ? 'Authoritative roll' : 'Giving (User Wins)'}
                   </span>
                 </div>
               </div>
@@ -395,13 +437,15 @@ export default function GameControlPage() {
                 <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
                   {isGlobalPayoutGame(game.id)
                     ? 'Target Payout Range chooses an exact item inside the min/max payout range. If no item is inside the range, it chooses the closest non-zero item below the minimum and avoids going above the maximum.'
+                    : game.id === 'lucky_dice'
+                      ? 'The backend rolls three dice, derives every winning zone, and settles all matching bets atomically. The client never chooses the dice or payout.'
                     : <>Lowering the probability increases the house edge (profit), while raising it makes users win more often. Factory default is <span className="text-white">30%</span>.</>}
                 </p>
               </div>
 
               <button
                 disabled={saving}
-                onClick={() => isGlobalPayoutGame(game.id) ? saveLimits(game) : updateSetting(game.id, game.win_chance_percent, game.is_active)}
+                onClick={() => isManagedRoundGame(game.id) ? saveLimits(game) : updateSetting(game.id, game.win_chance_percent, game.is_active)}
                 className="w-full bg-gradient-to-r from-pink-500 to-purple-600 hover:scale-[1.02] active:scale-[0.98] transition-all text-white font-black py-4 rounded-2xl flex items-center justify-center gap-3 shadow-xl shadow-pink-500/20 disabled:opacity-50"
               >
                 {saving ? <Loader2 className="animate-spin" size={20} /> : <><Save size={20} /> Save Game Config</>}
@@ -465,7 +509,7 @@ export default function GameControlPage() {
                   </p>
                 </div>
 
-                {isGlobalPayoutGame(game.id) && (
+                {isManagedRoundGame(game.id) && (
                   <div className="space-y-4 bg-amber-500/5 border border-amber-500/15 rounded-2xl p-4">
                     <div className="grid grid-cols-2 gap-3">
                       <div>
@@ -495,6 +539,41 @@ export default function GameControlPage() {
                         />
                       </div>
                     </div>
+
+                    {game.id === 'lucky_dice' && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] uppercase text-gray-500 font-bold">Last-bet grace seconds</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={10}
+                            className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                            value={Number(specialRules(game).bet_acceptance_grace_s ?? 3)}
+                            onChange={(e) => {
+                              const rules = specialRules(game);
+                              const value = Math.max(0, Math.min(10, parseInt(e.target.value) || 0));
+                              setSettings(settings.map((s) => s.id === game.id ? { ...s, special_result_rules: { ...rules, bet_acceptance_grace_s: value } } : s));
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase text-gray-500 font-bold">Dice animation seconds</label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={10}
+                            className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                            value={Number(specialRules(game).dice_animation_s ?? 3)}
+                            onChange={(e) => {
+                              const rules = specialRules(game);
+                              const value = Math.max(1, Math.min(10, parseInt(e.target.value) || 1));
+                              setSettings(settings.map((s) => s.id === game.id ? { ...s, special_result_rules: { ...rules, dice_animation_s: value } } : s));
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
 
                     <div className="grid grid-cols-1 gap-3">
                       <div>
@@ -605,12 +684,21 @@ export default function GameControlPage() {
                         <p className="text-sm text-white font-bold mt-1">Low payout: four 5x items</p>
                       </div>
                     </div>
-                    ) : (
+                    ) : game.id === 'tin_patti_pro' ? (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       {TIN_PATTI_PRO_ITEMS.map((item) => (
                         <div key={item.id} className="bg-[#0E111E] border border-white/10 rounded-xl p-3">
                           <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{item.label}</p>
                           <p className="text-sm text-white font-bold mt-1">Card board result</p>
+                        </div>
+                      ))}
+                    </div>
+                    ) : (
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                      {LUCKY_DICE_ITEMS.map((item) => (
+                        <div key={item.id} className="bg-[#0E111E] border border-white/10 rounded-xl p-3">
+                          <p className="text-[10px] uppercase tracking-widest text-gray-500 font-black">{item.label}</p>
+                          <p className="text-sm text-white font-bold mt-1">{item.multiplier}x default return</p>
                         </div>
                       ))}
                     </div>
@@ -626,7 +714,7 @@ export default function GameControlPage() {
                           <p className="text-xs text-red-300 font-bold mt-1">Warning: payout-owner balance is negative or empty. Payouts still run, but fund this profile.</p>
                         )}
                         {Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) > 0 && Number(houseProfiles[game.house_profile_id]?.diamonds ?? 0) < 100000 && (
-                          <p className="text-xs text-yellow-300 font-bold mt-1">Warning: payout-owner balance is low for high-multiplier pizza payouts.</p>
+                          <p className="text-xs text-yellow-300 font-bold mt-1">Warning: payout-owner balance is low for high-multiplier game payouts.</p>
                         )}
                       </div>
                     ) : (
@@ -637,6 +725,34 @@ export default function GameControlPage() {
                   </div>
                 )}
 
+                {game.id === 'lucky_dice' ? (
+                <div>
+                  <label className="text-[10px] uppercase text-gray-500 font-bold">Payout table</label>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {multiplierRows(game).map((row, index) => (
+                      <label key={String(row.id)} className="flex items-center justify-between gap-3 bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2">
+                        <span className="text-xs text-gray-300">{String(row.label || row.id).replaceAll('_', ' ')}</span>
+                        <span className="flex items-center gap-1">
+                          <input
+                            aria-label={`${String(row.label || row.id)} multiplier`}
+                            type="number"
+                            min={1}
+                            step="0.1"
+                            className="w-20 bg-black/30 border border-white/10 rounded-md px-2 py-1 text-right text-white text-sm focus:outline-none focus:border-pink-500"
+                            value={Number(row.m ?? row.multiplier ?? 0)}
+                            onChange={(e) => {
+                              const rows = multiplierRows(game).map((item, itemIndex) => itemIndex === index ? { ...item, m: Math.max(1, Number(e.target.value) || 1), multiplier: undefined } : item);
+                              setSettings(settings.map((s) => s.id === game.id ? { ...s, multipliers: rows, _multipliersText: JSON.stringify(rows, null, 2) } : s));
+                            }}
+                          />
+                          <span className="text-amber-300 font-bold">x</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-gray-600 mt-2">Changes apply to future settlements. Existing settled rounds are not recalculated.</p>
+                </div>
+                ) : (
                 <div>
                   <label className="text-[10px] uppercase text-gray-500 font-bold">Multipliers (JSON)</label>
                   <textarea
@@ -658,6 +774,7 @@ export default function GameControlPage() {
                       : 'Format: array of {id, label, m} boards'}
                   </p>
                 </div>
+                )}
 
                 <button
                   disabled={saving}
@@ -679,7 +796,7 @@ export default function GameControlPage() {
             const globalPayoutGames = await supabase
               .from('game_settings')
               .update({ win_chance_percent: 60, is_active: false, forced_next_category: null, forced_next_result: null })
-              .in('id', ['greedy_lion', 'tin_patti_pro']);
+              .in('id', APP_GAME_IDS);
             setSaving(false);
             if (globalPayoutGames.error) {
               alert('Reset failed: ' + globalPayoutGames.error.message);
