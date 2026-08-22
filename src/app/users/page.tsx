@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect } from 'react';
-import { Search, Filter, Edit2, Shield, Ban, Diamond, Sparkles, CheckCircle2, XCircle, Loader2, Crown, UserMinus, Bell, BellOff, MessageSquare, MessageSquareOff, Trash2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Filter, Edit2, Shield, Ban, Diamond, Sparkles, CheckCircle2, XCircle, Loader2, Crown, UserMinus, Bell, BellOff, MessageSquare, MessageSquareOff, Trash2, AlertTriangle, ChevronLeft, ChevronRight, Smartphone, Unlock, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAdminRole } from '@/lib/useAdminRole';
 
@@ -36,6 +36,23 @@ export default function UsersPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
   const [roleFilter, setRoleFilter] = useState('all');
+  const [detailUser, setDetailUser] = useState<any>(null);
+  const [detailTransactions, setDetailTransactions] = useState<any[]>([]);
+  const [detailStreams, setDetailStreams] = useState<any[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailStart, setDetailStart] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`; });
+  const [detailEnd, setDetailEnd] = useState(() => new Date().toISOString().slice(0,10));
+
+  async function loadUserDetail(target = detailUser, start = detailStart, end = detailEnd) {
+    if (!target?.id) return;
+    setDetailUser(target); setDetailLoading(true);
+    const endDate = new Date(`${end}T23:59:59.999Z`).toISOString();
+    const [tx, streams] = await Promise.all([
+      supabase.from('transactions').select('*').eq('user_id', target.id).gte('created_at', `${start}T00:00:00.000Z`).lte('created_at', endDate).order('created_at', { ascending: false }).limit(300),
+      supabase.from('live_streams').select('id,type,started_at,ended_at,total_gifts,total_earnings,status').eq('broadcaster_id', target.id).gte('started_at', `${start}T00:00:00.000Z`).lte('started_at', endDate).order('started_at', { ascending: false }).limit(100),
+    ]);
+    setDetailTransactions(tx.data || []); setDetailStreams(streams.data || []); setDetailLoading(false);
+  }
 
   useEffect(() => {
     fetchCommentTags();
@@ -97,6 +114,11 @@ export default function UsersPage() {
   const [deleteUser, setDeleteUser] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [blockUser, setBlockUser] = useState<any>(null);
+  const [accessControls, setAccessControls] = useState<any>(null);
+  const [blockMode, setBlockMode] = useState<'account'|'device'>('account');
+  const [blockReason, setBlockReason] = useState('');
+  const [blockLoading, setBlockLoading] = useState(false);
 
   async function performDeleteUser() {
     if (!deleteUser) return;
@@ -418,31 +440,65 @@ export default function UsersPage() {
     ));
   }
 
-  async function toggleBan(userId: string, currentStatus: string) {
-    const shouldBan = currentStatus !== 'Banned';
-    try {
-      const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) return;
-
-      const { data, error } = await supabase.rpc('admin_update_user', {
-        p_admin_id: authUser.id,
-        p_user_id: userId,
-        p_is_banned: shouldBan,
-        p_status: shouldBan ? 'banned' : 'active',
-        p_full_name: null,
-        p_diamonds: null,
-        p_beans: null,
-        p_role: null,
-      });
-
-      if (!error && data?.success) {
-        setUsers(users.map(u => u.id === userId ? { ...u, status: shouldBan ? 'Banned' : 'Active' } : u));
-      } else if (error) {
-        alert('Failed: ' + error.message);
-      }
-    } catch (e) {
-      console.error(e);
+  async function loadAccessControls(user: any) {
+    setBlockUser(user);
+    setAccessControls(null);
+    setBlockReason('');
+    setBlockMode('account');
+    setBlockLoading(true);
+    const { data, error } = await supabase.rpc('admin_get_user_access_controls', { p_user_id: user.id });
+    setBlockLoading(false);
+    if (error) {
+      alert('Failed to load access controls: ' + error.message);
+      setBlockUser(null);
+      return;
     }
+    setAccessControls(data);
+  }
+
+  async function setAccountBlocked(blocked: boolean) {
+    if (!blockUser) return;
+    setBlockLoading(true);
+    const { data, error } = await supabase.rpc('admin_set_account_block', {
+      p_user_id: blockUser.id,
+      p_blocked: blocked,
+      p_reason: blockReason.trim() || null,
+    });
+    setBlockLoading(false);
+    if (error || !data?.success) return alert(data?.message || error?.message || 'Account action failed');
+    setUsers((current) => current.map((u) => u.id === blockUser.id
+      ? { ...u, is_banned: blocked, status: blocked ? 'banned' : 'active' }
+      : u));
+    setAccessControls((current: any) => ({ ...current, account_blocked: blocked }));
+    setBlockReason('');
+  }
+
+  async function setDeviceBlocked(deviceHash: string | null, blocked: boolean) {
+    if (!blockUser) return;
+    setBlockLoading(true);
+    const { data, error } = await supabase.rpc('admin_set_device_block', {
+      p_user_id: blockUser.id,
+      p_device_hash: deviceHash,
+      p_blocked: blocked,
+      p_reason: blockReason.trim() || null,
+    });
+    if (error || !data?.success) {
+      setBlockLoading(false);
+      return alert(data?.message || error?.message || 'Device action failed');
+    }
+    const refreshed = await supabase.rpc('admin_get_user_access_controls', { p_user_id: blockUser.id });
+    setBlockLoading(false);
+    if (!refreshed.error) {
+      setAccessControls(refreshed.data);
+      setUsers((current) => current.map((user) => user.id === blockUser.id
+        ? {
+            ...user,
+            is_banned: !!refreshed.data?.account_blocked,
+            status: refreshed.data?.account_blocked ? 'banned' : 'active',
+          }
+        : user));
+    }
+    setBlockReason('');
   }
 
   const totalPages = Math.max(1, Math.ceil(totalUsers / USERS_PAGE_SIZE));
@@ -525,7 +581,7 @@ export default function UsersPage() {
             )}
             {users.map((user) => (
               <tr key={user.id} className="border-b border-white/5 hover:bg-white/[0.02] transition-all group">
-                <td className="px-6 py-4">
+                <td className="px-6 py-4 cursor-pointer" onClick={() => void loadUserDetail(user)} title="Open complete user ledger">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-pink-500/20 flex items-center justify-center font-bold text-pink-500 border border-pink-500/20 group-hover:scale-110 transition-transform">
                       {user.full_name?.[0] || 'U'}
@@ -656,9 +712,9 @@ export default function UsersPage() {
                       <Shield size={16} />
                     </button>
                     <button
-                      className={`p-2 hover:bg-white/5 rounded-lg transition-all ${user.status === 'Banned' ? 'text-green-400 hover:bg-green-400/10' : 'text-gray-400 hover:text-red-400 hover:bg-red-400/10'}`}
-                      onClick={() => toggleBan(user.id, user.status)}
-                      title={user.status === 'Banned' ? 'Unban User' : 'Ban User'}
+                      className={`p-2 hover:bg-white/5 rounded-lg transition-all ${user.is_banned ? 'text-red-400 bg-red-400/10' : 'text-gray-400 hover:text-red-400 hover:bg-red-400/10'}`}
+                      onClick={() => loadAccessControls(user)}
+                      title="Account and device access controls"
                     >
                       <Ban size={16} />
                     </button>
@@ -704,6 +760,89 @@ export default function UsersPage() {
           </div>
         </div>
       </div>
+
+      {detailUser && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-[#161225] border border-cyan-500/25 rounded-2xl w-full max-w-5xl max-h-[92vh] overflow-y-auto shadow-2xl">
+            <div className="sticky top-0 z-10 bg-[#161225] p-5 border-b border-white/10 flex items-start justify-between">
+              <div><h2 className="text-xl font-black text-white">{detailUser.full_name || 'User'} — Complete Ledger</h2><p className="text-xs text-gray-400">ID {detailUser.display_id || '—'} • Current 💎 {(detailUser.diamonds || 0).toLocaleString()} • Bins {(detailUser.beans || 0).toLocaleString()}</p></div>
+              <button onClick={() => setDetailUser(null)} className="p-2 text-gray-400 hover:text-white"><X size={22}/></button>
+            </div>
+            <div className="p-5 space-y-5">
+              <div className="flex flex-wrap gap-2 items-end">
+                <label className="text-xs text-gray-400">From<input type="date" value={detailStart} onChange={e=>setDetailStart(e.target.value)} className="block mt-1 bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white"/></label>
+                <label className="text-xs text-gray-400">To<input type="date" value={detailEnd} onChange={e=>setDetailEnd(e.target.value)} className="block mt-1 bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white"/></label>
+                <button onClick={()=>void loadUserDetail()} className="px-4 py-2 rounded-lg bg-cyan-600 text-white font-bold">Apply Custom Date</button>
+                <button onClick={()=>{const d=new Date();const s=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;const e=d.toISOString().slice(0,10);setDetailStart(s);setDetailEnd(e);void loadUserDetail(detailUser,s,e)}} className="px-4 py-2 rounded-lg bg-violet-600 text-white font-bold">Current Month</button>
+              </div>
+              {detailLoading ? <div className="py-16 flex justify-center"><Loader2 className="animate-spin text-cyan-400"/></div> : <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    ['Transactions',detailTransactions.length],
+                    ['Credits',detailTransactions.filter(t=>Number(t.amount)>0).reduce((s,t)=>s+Number(t.amount||0),0).toLocaleString()],
+                    ['Gift earnings',detailTransactions.filter(t=>t.type==='gift_received').reduce((s,t)=>s+Number(t.amount||0),0).toLocaleString()],
+                    ['Live time',`${Math.round(detailStreams.reduce((s,l)=>s+Math.max(0,(new Date(l.ended_at||Date.now()).getTime()-new Date(l.started_at).getTime())/60000),0))} min`],
+                  ].map(([label,value])=><div key={label} className="bg-white/5 rounded-xl p-4"><p className="text-xs text-gray-500 uppercase">{label}</p><p className="text-lg font-black text-white mt-1">{value}</p></div>)}
+                </div>
+                <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-gray-500 border-b border-white/10"><th className="text-left py-3">Date</th><th className="text-left">Type</th><th className="text-left">Currency</th><th className="text-right">Amount</th><th className="text-left pl-4">Status / Notes</th></tr></thead><tbody>{detailTransactions.map(tx=><tr key={tx.id} className="border-b border-white/5"><td className="py-3 text-gray-400">{new Date(tx.created_at).toLocaleString()}</td><td className="text-white">{tx.type}</td><td className="text-gray-300">{tx.currency}</td><td className={`text-right font-bold ${Number(tx.amount)>=0?'text-emerald-400':'text-red-400'}`}>{Number(tx.amount).toLocaleString()}</td><td className="pl-4 text-gray-400">{tx.status} {tx.notes ? `• ${tx.notes}` : ''}</td></tr>)}</tbody></table></div>
+              </>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {blockUser && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+          <div className="bg-[#161225] border border-red-500/25 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
+            <div className="sticky top-0 z-10 bg-[#161225] p-5 border-b border-white/10 flex items-start justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-11 h-11 rounded-xl bg-red-500/15 border border-red-500/25 flex items-center justify-center"><Ban className="text-red-400" size={21} /></div>
+                <div className="min-w-0"><h3 className="text-xl font-black text-white">Access Controls</h3><p className="text-sm text-gray-400 truncate">{blockUser.full_name || 'User'} · ID {blockUser.display_id}</p></div>
+              </div>
+              <button className="p-2 text-gray-400 hover:text-white rounded-lg hover:bg-white/5" onClick={() => setBlockUser(null)}><X size={20} /></button>
+            </div>
+
+            {blockLoading && !accessControls ? <div className="py-20 flex justify-center"><Loader2 className="animate-spin text-purple-400" /></div> : accessControls && (
+              <div className="p-5 space-y-5">
+                <div className="grid grid-cols-2 gap-2 bg-black/25 p-1.5 rounded-xl">
+                  <button onClick={() => setBlockMode('account')} className={`py-3 rounded-lg text-sm font-bold ${blockMode === 'account' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'}`}>Temporary Account Block</button>
+                  <button onClick={() => setBlockMode('device')} className={`py-3 rounded-lg text-sm font-bold ${blockMode === 'device' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white'}`}>Permanent Device Block</button>
+                </div>
+
+                {blockMode === 'account' ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-xs uppercase tracking-wider text-gray-500 font-bold">Account identity</p>
+                      <p className="text-white font-bold mt-1">{accessControls.email || 'No email available'}</p>
+                      <p className="text-sm mt-2 text-gray-300">Status: <span className={accessControls.account_blocked ? 'text-red-400 font-bold' : 'text-green-400 font-bold'}>{accessControls.account_blocked ? 'Temporarily blocked' : 'Active'}</span></p>
+                      <p className="text-xs text-gray-500 mt-2">Blocks this user ID and authentication email. Unblocking restores access without deleting account data.</p>
+                    </div>
+                    {!accessControls.account_blocked && <textarea value={blockReason} onChange={(e) => setBlockReason(e.target.value)} rows={3} placeholder="Reason for blocking (recommended)" className="w-full bg-black/25 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-red-500/50" />}
+                    <button disabled={blockLoading} onClick={() => setAccountBlocked(!accessControls.account_blocked)} className={`w-full py-3.5 rounded-xl font-black flex items-center justify-center gap-2 disabled:opacity-50 ${accessControls.account_blocked ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-red-600 hover:bg-red-500 text-white'}`}>
+                      {blockLoading ? <Loader2 className="animate-spin" size={18} /> : accessControls.account_blocked ? <Unlock size={18} /> : <Ban size={18} />}
+                      {accessControls.account_blocked ? 'Unblock Account' : 'Temporarily Block Account'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-sm text-gray-300">A device block blocks that device and immediately blocks this user ID/email too. Unblocking a device restores the linked user ID/email automatically. Active live, game, and app screens are closed immediately. IP is audit-only because mobile addresses change and can be shared.</div>
+                    {accessControls.devices.length === 0 ? (
+                      <div className="rounded-xl border border-yellow-500/25 bg-yellow-500/5 p-5 text-center"><Smartphone className="mx-auto text-yellow-400" /><p className="text-white font-bold mt-2">No registered device</p><p className="text-xs text-gray-400 mt-1">The user must open the updated app once before their device can be selected.</p></div>
+                    ) : <div className="space-y-2">{accessControls.devices.map((device: any) => (
+                      <div key={device.device_hash} className="rounded-xl border border-white/10 bg-black/20 p-4 flex items-center gap-3">
+                        <Smartphone className={device.blocked ? 'text-red-400' : 'text-purple-400'} size={22} />
+                        <div className="min-w-0 flex-1"><p className="text-white font-bold text-sm">{device.device_model || device.platform || 'Unknown device'}</p><p className="text-xs text-gray-500 truncate">{device.platform} {device.os_version || ''} · App {device.app_version || 'unknown'} · IP {device.last_ip || 'unavailable'}</p><p className="text-[11px] text-gray-600">Last seen {new Date(device.last_seen_at).toLocaleString()}</p></div>
+                        <button disabled={blockLoading} onClick={() => setDeviceBlocked(device.device_hash, !device.blocked)} className={`px-3 py-2 rounded-lg text-xs font-black disabled:opacity-50 ${device.blocked ? 'bg-green-600/20 text-green-400' : 'bg-red-600/20 text-red-400'}`}>{device.blocked ? 'Unblock' : 'Block'}</button>
+                      </div>
+                    ))}</div>}
+                    {accessControls.devices.some((device: any) => !device.blocked) && <><textarea value={blockReason} onChange={(e) => setBlockReason(e.target.value)} rows={2} placeholder="Reason for device block (recommended)" className="w-full bg-black/25 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-red-500/50" /><button disabled={blockLoading} onClick={() => setDeviceBlocked(null, true)} className="w-full py-3.5 rounded-xl bg-red-700 hover:bg-red-600 text-white font-black flex items-center justify-center gap-2 disabled:opacity-50">{blockLoading ? <Loader2 className="animate-spin" size={18} /> : <Smartphone size={18} />} Block All Registered Devices</button></>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Promote to Agency Owner Modal */}
       {promoteUser && (
