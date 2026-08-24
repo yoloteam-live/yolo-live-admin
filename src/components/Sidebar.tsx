@@ -32,6 +32,7 @@ import {
   Tags,
   UserCog,
   Video,
+  Activity,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -57,6 +58,7 @@ const navItems: NavItem[] = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Finance', href: '/finance', icon: Wallet },
   { name: 'Bins Withdrawals', href: '/bins-withdrawals', icon: Wallet },
+  { name: 'Anubis ID Ledger', href: '/anubis-ledger', icon: Wallet },
   { name: 'Messages', href: '/messages', icon: MessageSquare, badgeKey: 'unread_dms' },
   { name: 'Users', href: '/users', icon: Users },
   { name: 'Applications', href: '/applications', icon: Inbox },
@@ -67,6 +69,7 @@ const navItems: NavItem[] = [
   { name: 'Reseller Stock Requests', href: '/reseller-stock-requests', icon: Package },
   { name: 'Live Rooms', href: '/live-rooms', icon: Radio },
   { name: 'Game Control', href: '/games', icon: Gamepad2 },
+  { name: 'Crash Operations', href: '/crash-operations', icon: Activity },
   { name: 'Game History', href: '/game-history', icon: Trophy },
   { name: 'Gifts Catalog', href: '/gifts', icon: Gift },
   { name: 'Audio Templates', href: '/audio-templates', icon: ImageIcon },

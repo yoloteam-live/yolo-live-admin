@@ -20,7 +20,7 @@ type RoundRow = {
   user: { full_name: string; display_id: number; avatar_url: string | null } | null;
 };
 
-const ACTIVE_GAMES = ['greedy_lion', 'tin_patti_pro', 'lucky_dice'] as const;
+const ACTIVE_GAMES = ['greedy_lion', 'greedy_pro', 'tin_patti_pro', 'lucky_dice'] as const;
 const GAMES = ['all', ...ACTIVE_GAMES] as const;
 type GameKey = typeof GAMES[number];
 
