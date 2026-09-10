@@ -30,16 +30,37 @@ type AgencyMember = {
   host?: { full_name: string; display_id: number; avatar_url?: string };
 };
 
+type LeaveRequest = {
+  id: string;
+  host_id: string;
+  agency_id: string;
+  status: string;
+  penalty_amount: number;
+  requested_at: string;
+  host?: { full_name: string; display_id: number; avatar_url?: string };
+  agency?: { name: string; code: string };
+};
+
+type UserMatch = {
+  id: string;
+  full_name: string;
+  display_id: number;
+  avatar_url?: string;
+  agency_id?: string | null;
+  is_banned: boolean;
+};
+
 export default function AgenciesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, members: 0, payouts: 0 });
   const [requests, setRequests] = useState<JoinRequest[]>([]);
+  const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [assignAgency, setAssignAgency] = useState<Agency | null>(null);
   const [agencyMembers, setAgencyMembers] = useState<AgencyMember[]>([]);
   const [userQuery, setUserQuery] = useState('');
-  const [userMatches, setUserMatches] = useState<any[]>([]);
+  const [userMatches, setUserMatches] = useState<UserMatch[]>([]);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
 
   useEffect(() => {
@@ -48,7 +69,7 @@ export default function AgenciesPage() {
 
   async function fetchData() {
     setLoading(true);
-    const [agenciesRes, payoutSumRes, requestsRes] = await Promise.all([
+    const [agenciesRes, payoutSumRes, requestsRes, leaveRequestsRes] = await Promise.all([
       supabase
         .from('agencies')
         .select('*, owner:profiles!agencies_owner_id_fkey(full_name, display_id)')
@@ -62,11 +83,17 @@ export default function AgenciesPage() {
         .select('id,user_id,agency_id,status,applicant_note,created_at,user:profiles!agency_join_requests_user_id_fkey(full_name,display_id,avatar_url),agency:agencies!agency_join_requests_agency_id_fkey(name,code)')
         .eq('status', 'pending')
         .order('created_at', { ascending: true }),
+      supabase
+        .from('agency_leave_requests')
+        .select('id,host_id,agency_id,status,penalty_amount,requested_at,host:profiles!agency_leave_requests_host_id_fkey(full_name,display_id,avatar_url),agency:agencies!agency_leave_requests_agency_id_fkey(name,code)')
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: true }),
     ]);
-    setRequests((requestsRes.data as any[]) || []);
+    setRequests((requestsRes.data as unknown as JoinRequest[]) || []);
+    setLeaveRequests((leaveRequestsRes.data as unknown as LeaveRequest[]) || []);
 
     if (agenciesRes.data) {
-      setAgencies(agenciesRes.data as any);
+      setAgencies(agenciesRes.data as unknown as Agency[]);
       const totalMembers = agenciesRes.data.reduce((sum, a) => sum + (a.member_count || 0), 0);
       const totalPayouts = (payoutSumRes.data || []).reduce(
         (sum, p) => sum + Number(p.bdt_value || 0), 0
@@ -92,6 +119,23 @@ export default function AgenciesPage() {
     setActionBusy(null);
     if (error || !data?.success) alert(data?.message || error?.message || 'Request update failed');
     else await fetchData();
+  }
+
+  async function reviewLeaveRequest(request: LeaveRequest, approve: boolean) {
+    const action = approve ? 'approve' : 'reject';
+    if (!window.confirm(`${approve ? 'Approve' : 'Reject'} ${request.host?.full_name || 'this host'}'s agency leave request?`)) return;
+    const note = window.prompt('Optional review note') || null;
+    setActionBusy(request.id);
+    const { data, error } = await supabase.rpc(
+      approve ? 'approve_leave_request' : 'reject_leave_request',
+      { p_host_id: request.host_id, p_review_note: note },
+    );
+    setActionBusy(null);
+    if (error || !data?.success) {
+      alert(data?.message || error?.message || `Could not ${action} leave request`);
+      return;
+    }
+    await fetchData();
   }
 
   async function searchUsers(value: string) {
@@ -123,7 +167,7 @@ export default function AgenciesPage() {
       .eq('agency_id', agency.id)
       .in('status', ['active', 'leave_pending'])
       .order('joined_at', { ascending: false });
-    setAgencyMembers((data as any[]) || []);
+    setAgencyMembers((data as unknown as AgencyMember[]) || []);
   }
 
   async function releaseUser(member: AgencyMember) {
@@ -228,6 +272,32 @@ export default function AgenciesPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="glass-card overflow-hidden">
+        <div className="px-6 py-5 border-b border-white/5 flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-black text-white">Agency Leave Requests</h3>
+            <p className="text-xs text-gray-500">Only a Super Admin can approve removal and the 50,000 diamond penalty.</p>
+          </div>
+          <span className="rounded-full bg-rose-500/15 text-rose-300 px-3 py-1 text-xs font-bold">{leaveRequests.length} pending</span>
+        </div>
+        {leaveRequests.length === 0 ? <p className="p-8 text-center text-sm text-gray-500">No pending agency leave requests.</p> : (
+          <div className="divide-y divide-white/5">
+            {leaveRequests.map((request) => (
+              <div key={request.id} className="p-5 flex items-center gap-4 flex-wrap">
+                <div className="w-10 h-10 rounded-full bg-rose-500/20 flex items-center justify-center font-black text-white">{request.host?.full_name?.[0]?.toUpperCase() || 'H'}</div>
+                <div className="flex-1 min-w-[200px]">
+                  <p className="font-bold text-white">{request.host?.full_name || 'Host'} <span className="font-mono text-[10px] text-gray-500">ID {request.host?.display_id}</span></p>
+                  <p className="text-xs text-gray-400">Leave <b className="text-cyan-300">{request.agency?.name || 'agency'}</b> · {new Date(request.requested_at).toLocaleString()}</p>
+                  <p className="text-xs text-amber-300 mt-1">Penalty on approval: {Number(request.penalty_amount || 50000).toLocaleString()} diamonds</p>
+                </div>
+                <button disabled={actionBusy === request.id} onClick={() => void reviewLeaveRequest(request, true)} className="px-3 py-2 rounded-lg bg-rose-500/15 text-rose-300 text-xs font-bold disabled:opacity-50">Approve Leave</button>
+                <button disabled={actionBusy === request.id} onClick={() => void reviewLeaveRequest(request, false)} className="px-3 py-2 rounded-lg bg-emerald-500/15 text-emerald-300 text-xs font-bold disabled:opacity-50">Keep Host</button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="glass-card overflow-hidden">

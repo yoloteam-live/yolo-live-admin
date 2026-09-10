@@ -30,6 +30,19 @@ type Settings = {
   min_supported_app_version: string;
   store_url_android: string;
   app_update_notes: string;
+  self_gifting: {
+    enabled: boolean;
+    daily_diamond_limit: number;
+    daily_count_limit: number;
+    count_toward_earnings: boolean;
+  };
+  tin_patti_pro_win_strategy: {
+    enabled: boolean;
+    cycle: number;
+    max: number;
+    medium: number;
+    min: number;
+  };
 };
 
 const DEFAULTS: Settings = {
@@ -47,11 +60,24 @@ const DEFAULTS: Settings = {
   bulk_diamond_bdt_per_1000: 10,
   sell_diamond_bdt_per_1000: 11,
   host_payout_bdt_per_1000:  9,
-  host_hour_reward: { enabled: true, beans: 6000, minutes: 60 },
+  host_hour_reward: { enabled: true, beans: 5000, minutes: 60 },
   latest_app_version: '1.1.19',
   min_supported_app_version: '1.1.19',
   store_url_android: '',
   app_update_notes: '',
+  self_gifting: {
+    enabled: true,
+    daily_diamond_limit: 0,
+    daily_count_limit: 0,
+    count_toward_earnings: false,
+  },
+  tin_patti_pro_win_strategy: {
+    enabled: false,
+    cycle: 10,
+    max: 2,
+    medium: 6,
+    min: 2,
+  },
 };
 
 export default function SettingsPage() {
@@ -114,6 +140,34 @@ export default function SettingsPage() {
 
   const setField = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setSettings((s) => ({ ...s, [key]: value }));
+
+  // self_gifting is stored as one JSON object under a single system_settings key,
+  // so its fields are edited through a nested setter rather than setField.
+  const setSelfGift = <K extends keyof Settings['self_gifting']>(key: K, value: Settings['self_gifting'][K]) =>
+    setSettings((s) => ({
+      ...s,
+      self_gifting: { ...(s.self_gifting || DEFAULTS.self_gifting), [key]: value },
+    }));
+
+  // Same nested-JSON pattern as self_gifting.
+  const setWinStrategy = <K extends keyof Settings['tin_patti_pro_win_strategy']>(
+    key: K,
+    value: Settings['tin_patti_pro_win_strategy'][K],
+  ) =>
+    setSettings((s) => ({
+      ...s,
+      tin_patti_pro_win_strategy: {
+        ...(s.tin_patti_pro_win_strategy || DEFAULTS.tin_patti_pro_win_strategy),
+        [key]: value,
+      },
+    }));
+
+  const winStrategy = settings.tin_patti_pro_win_strategy || DEFAULTS.tin_patti_pro_win_strategy;
+  const winStrategyTotal =
+    (Number(winStrategy.max) || 0)
+    + (Number(winStrategy.medium) || 0)
+    + (Number(winStrategy.min) || 0);
+  const winStrategyBalanced = winStrategyTotal === (Number(winStrategy.cycle) || 0);
 
   if (loading) {
     return (
@@ -218,6 +272,125 @@ export default function SettingsPage() {
         </div>
       </div>
 
+      {/* Self-gifting */}
+      <div className="glass-card p-6">
+        <h2 className="text-lg font-black text-white mb-1">Host Self-Gifting</h2>
+        <p className="text-xs text-gray-500 mb-5">
+          Lets a host send gifts to themselves during their own live, paid from their own
+          diamonds. Self-gifts never count toward rankings, agency income or withdrawable
+          earnings unless you switch that on below.
+        </p>
+        <div className="space-y-3">
+          <Toggle
+            label="Enable self-gifting"
+            desc="Global switch. Turning this off blocks it for every host immediately."
+            value={settings.self_gifting?.enabled ?? false}
+            onChange={(v) => setSelfGift('enabled', v)}
+          />
+          <Toggle
+            label="Count self-gifts toward earnings"
+            desc="Off by default. When on, self-gifted beans become withdrawable and count as agency income."
+            value={settings.self_gifting?.count_toward_earnings ?? false}
+            onChange={(v) => setSelfGift('count_toward_earnings', v)}
+          />
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-5">
+          <Field
+            label="Daily diamond limit"
+            type="number"
+            hint="Max diamonds one host may self-gift per day (Asia/Dhaka). 0 = unlimited."
+            value={String(settings.self_gifting?.daily_diamond_limit ?? 0)}
+            onChange={(v) => setSelfGift('daily_diamond_limit', Math.max(0, Number(v) || 0))}
+          />
+          <Field
+            label="Daily gift count limit"
+            type="number"
+            hint="Max number of self-gifts per host per day. 0 = unlimited."
+            value={String(settings.self_gifting?.daily_count_limit ?? 0)}
+            onChange={(v) => setSelfGift('daily_count_limit', Math.max(0, Number(v) || 0))}
+          />
+        </div>
+      </div>
+
+      {/* Teen Patti win strategy */}
+      <div className="glass-card p-6">
+        <h2 className="text-lg font-black text-white mb-1">Teen Patti — Win Strategy</h2>
+        <p className="text-xs text-gray-500 mb-4">
+          Fixes how many rounds in each cycle are won by the biggest, second-biggest and
+          smallest board, ranked by how much players staked on them. The counts are
+          guaranteed over the cycle; the <span className="text-gray-300">order is drawn at
+          random</span>, so players cannot predict which round pays out big. Only rounds that
+          actually received bets consume a slot.
+        </p>
+
+        <div className="rounded-xl border border-violet-500/30 bg-violet-500/10 px-4 py-3 text-xs text-violet-200 mb-5">
+          <b className="text-violet-100">While this is on, the target-payout band is ignored.</b>{' '}
+          The winner is decided purely by these counts, not by the 30–40% payout targeting used
+          normally. A manual &quot;forced next result&quot; still overrides everything.
+        </div>
+
+        <div className="space-y-3">
+          <Toggle
+            label="Enable win strategy"
+            desc="Off by default. While off, results use the target-payout band and nothing changes."
+            value={winStrategy.enabled ?? false}
+            onChange={(v) => setWinStrategy('enabled', v)}
+          />
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-5">
+          <Field
+            label="Rounds per cycle"
+            type="number"
+            hint="The block size the counts below must add up to."
+            value={String(winStrategy.cycle ?? 10)}
+            onChange={(v) => setWinStrategy('cycle', Math.max(1, Math.min(200, Number(v) || 1)))}
+          />
+          <Field
+            label="Max pot wins"
+            type="number"
+            hint="Biggest-staked board wins. Players win the most."
+            value={String(winStrategy.max ?? 0)}
+            onChange={(v) => setWinStrategy('max', Math.max(0, Number(v) || 0))}
+          />
+          <Field
+            label="2nd max pot wins"
+            type="number"
+            hint="Second-biggest board wins."
+            value={String(winStrategy.medium ?? 0)}
+            onChange={(v) => setWinStrategy('medium', Math.max(0, Number(v) || 0))}
+          />
+          <Field
+            label="Small pot wins"
+            type="number"
+            hint="Smallest-staked board wins. House keeps the most."
+            value={String(winStrategy.min ?? 0)}
+            onChange={(v) => setWinStrategy('min', Math.max(0, Number(v) || 0))}
+          />
+        </div>
+
+        <div
+          className={`mt-4 rounded-xl border px-4 py-3 text-sm ${
+            winStrategyBalanced
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+              : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+          }`}
+        >
+          {winStrategyBalanced ? (
+            <>
+              Balanced — {winStrategy.max} max pot, {winStrategy.medium} 2nd max and {winStrategy.min} small
+              pot wins in every {winStrategy.cycle} rounds that take bets.
+            </>
+          ) : (
+            <>
+              The three counts add up to <b>{winStrategyTotal}</b> but the cycle is{' '}
+              <b>{winStrategy.cycle}</b>. The game uses the counts as written, so the cycle will
+              actually be {winStrategyTotal} rounds long. Match them to avoid surprises.
+            </>
+          )}
+        </div>
+      </div>
+
       {/* Feature toggles */}
       <div className="glass-card p-6">
         <div className="flex items-center gap-3 mb-6">
@@ -309,11 +482,11 @@ export default function SettingsPage() {
       </div>
 
       <div className="glass-card p-6">
-        <div className="flex items-center gap-3 mb-6"><DollarSign className="text-amber-400" size={24}/><div><h3 className="text-xl font-bold text-white">Daily Host Live Reward</h3><p className="text-xs text-gray-500">Cumulative video time, reset at midnight Asia/Dhaka. Audio does not count.</p></div></div>
+        <div className="flex items-center gap-3 mb-6"><DollarSign className="text-amber-400" size={24}/><div><h3 className="text-xl font-bold text-white">Daily Host Live Reward</h3><p className="text-xs text-gray-500">One continuous video hour, once per Asia/Dhaka calendar day. Audio does not count.</p></div></div>
         <Toggle label="Reward enabled" desc="Credit each eligible host at most once per Bangladesh calendar day." value={settings.host_hour_reward?.enabled !== false} onChange={(v)=>setField('host_hour_reward',{...(settings.host_hour_reward||DEFAULTS.host_hour_reward),enabled:v})}/>
         <div className="grid md:grid-cols-2 gap-5 mt-5">
-          <Field label="Reward beans" type="number" value={String(settings.host_hour_reward?.beans ?? 6000)} onChange={(v)=>setField('host_hour_reward',{...(settings.host_hour_reward||DEFAULTS.host_hour_reward),beans:Math.max(0,parseInt(v)||0)})}/>
-          <Field label="Required video minutes" type="number" value={String(settings.host_hour_reward?.minutes ?? 60)} onChange={(v)=>setField('host_hour_reward',{...(settings.host_hour_reward||DEFAULTS.host_hour_reward),minutes:Math.max(1,parseInt(v)||60)})}/>
+          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-xs text-gray-500">Reward beans</p><p className="mt-1 text-lg font-black text-white">5,000</p></div>
+          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4"><p className="text-xs text-gray-500">Continuous video time</p><p className="mt-1 text-lg font-black text-white">60 minutes</p></div>
         </div>
       </div>
 

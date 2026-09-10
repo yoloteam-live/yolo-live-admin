@@ -54,6 +54,30 @@ export default function UsersPage() {
     setDetailTransactions(tx.data || []); setDetailStreams(streams.data || []); setDetailLoading(false);
   }
 
+  // Audio and Video live time are reported separately, and Video Live days are
+  // counted as distinct Dhaka days on which the host ran at least one video
+  // session. Derived from the streams already loaded for the selected range so
+  // the figures always match the date picker above.
+  function liveBreakdown(streams: any[]) {
+    const minutesOf = (l: any) => Math.max(
+      0,
+      (new Date(l.ended_at || Date.now()).getTime() - new Date(l.started_at).getTime()) / 60000,
+    );
+    const isVideo = (l: any) => String(l.type || '').trim().toLowerCase() === 'video';
+    const dhakaDay = (iso: string) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Dhaka', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date(iso));
+    const videoDays = new Set<string>();
+    let video = 0;
+    let audio = 0;
+    for (const l of streams) {
+      if (!l?.started_at) continue;
+      if (isVideo(l)) { video += minutesOf(l); videoDays.add(dhakaDay(l.started_at)); }
+      else audio += minutesOf(l);
+    }
+    return { video: Math.round(video), audio: Math.round(audio), videoDays: videoDays.size };
+  }
+
   useEffect(() => {
     fetchCommentTags();
     fetchCosmetics();
@@ -776,12 +800,14 @@ export default function UsersPage() {
                 <button onClick={()=>{const d=new Date();const s=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-01`;const e=d.toISOString().slice(0,10);setDetailStart(s);setDetailEnd(e);void loadUserDetail(detailUser,s,e)}} className="px-4 py-2 rounded-lg bg-violet-600 text-white font-bold">Current Month</button>
               </div>
               {detailLoading ? <div className="py-16 flex justify-center"><Loader2 className="animate-spin text-cyan-400"/></div> : <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {[
                     ['Transactions',detailTransactions.length],
                     ['Credits',detailTransactions.filter(t=>Number(t.amount)>0).reduce((s,t)=>s+Number(t.amount||0),0).toLocaleString()],
                     ['Gift earnings',detailTransactions.filter(t=>t.type==='gift_received').reduce((s,t)=>s+Number(t.amount||0),0).toLocaleString()],
-                    ['Live time',`${Math.round(detailStreams.reduce((s,l)=>s+Math.max(0,(new Date(l.ended_at||Date.now()).getTime()-new Date(l.started_at).getTime())/60000),0))} min`],
+                    ['Video live time',`${liveBreakdown(detailStreams).video} min`],
+                    ['Audio live time',`${liveBreakdown(detailStreams).audio} min`],
+                    ['Video live days',liveBreakdown(detailStreams).videoDays],
                   ].map(([label,value])=><div key={label} className="bg-white/5 rounded-xl p-4"><p className="text-xs text-gray-500 uppercase">{label}</p><p className="text-lg font-black text-white mt-1">{value}</p></div>)}
                 </div>
                 <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-gray-500 border-b border-white/10"><th className="text-left py-3">Date</th><th className="text-left">Type</th><th className="text-left">Currency</th><th className="text-right">Amount</th><th className="text-left pl-4">Status / Notes</th></tr></thead><tbody>{detailTransactions.map(tx=><tr key={tx.id} className="border-b border-white/5"><td className="py-3 text-gray-400">{new Date(tx.created_at).toLocaleString()}</td><td className="text-white">{tx.type}</td><td className="text-gray-300">{tx.currency}</td><td className={`text-right font-bold ${Number(tx.amount)>=0?'text-emerald-400':'text-red-400'}`}>{Number(tx.amount).toLocaleString()}</td><td className="pl-4 text-gray-400">{tx.status} {tx.notes ? `• ${tx.notes}` : ''}</td></tr>)}</tbody></table></div>

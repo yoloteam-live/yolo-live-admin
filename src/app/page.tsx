@@ -1,8 +1,8 @@
 "use client";
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  Users, Diamond, Sparkles, Activity, TrendingUp, CheckCircle2, XCircle, Loader2,
+  Users, Diamond, Sparkles, Activity, TrendingUp, CheckCircle2, XCircle, Loader2, LogOut,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
@@ -33,15 +33,12 @@ export default function Dashboard() {
     totalDiamonds: 0,
     totalBeans: 0,
     pendingTopups: 0,
+    pendingAgencyLeaves: 0,
   });
   const [recentTx, setRecentTx] = useState<RecentTx[]>([]);
   const [topAgencies, setTopAgencies] = useState<TopAgency[]>([]);
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
-  async function loadDashboard() {
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
       const [
@@ -49,6 +46,7 @@ export default function Dashboard() {
         liveRes,
         balanceRes,
         topupRes,
+        leaveRes,
         recentTxRes,
         agenciesRes,
         payoutsRes,
@@ -57,6 +55,7 @@ export default function Dashboard() {
         supabase.from('live_streams').select('id', { count: 'exact', head: true }).eq('status', 'live'),
         supabase.from('profiles').select('diamonds, beans'),
         supabase.from('topup_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('agency_leave_requests').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
         supabase
           .from('transactions')
           .select('id, type, amount, currency, status, created_at, user:profiles!transactions_user_id_fkey(full_name, display_id)')
@@ -81,9 +80,10 @@ export default function Dashboard() {
         totalDiamonds,
         totalBeans,
         pendingTopups: topupRes.count || 0,
+        pendingAgencyLeaves: leaveRes.count || 0,
       });
 
-      setRecentTx((recentTxRes.data || []) as any);
+      setRecentTx((recentTxRes.data || []) as unknown as RecentTx[]);
 
       // Compute top agencies with total paid
       const payoutMap: Record<string, number> = {};
@@ -101,7 +101,11 @@ export default function Dashboard() {
       setConnected(false);
     }
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(() => loadDashboard());
+  }, [loadDashboard]);
 
   const compactNum = (n: number) => {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
@@ -114,6 +118,7 @@ export default function Dashboard() {
     { name: 'Active Live', value: stats.activeLive.toLocaleString(), icon: Activity, color: 'text-green-400' },
     { name: 'Total Diamonds', value: compactNum(stats.totalDiamonds), icon: Diamond, color: 'text-pink-400' },
     { name: 'Total Beans', value: compactNum(stats.totalBeans), icon: Sparkles, color: 'text-yellow-400' },
+    { name: 'Agency Leaves', value: stats.pendingAgencyLeaves.toLocaleString(), icon: LogOut, color: 'text-rose-400' },
   ];
 
   return (
@@ -136,18 +141,28 @@ export default function Dashboard() {
           <p className="text-gray-500 mt-1">Real-time snapshot of platform activity.</p>
         </div>
 
-        {stats.pendingTopups > 0 && (
-          <Link
-            href="/topups"
-            className="bg-yellow-500/10 border border-yellow-400/30 text-yellow-400 hover:bg-yellow-500/20 px-5 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 animate-pulse"
-          >
-            ⚠ {stats.pendingTopups} pending top-up{stats.pendingTopups > 1 ? 's' : ''} — review now
-          </Link>
-        )}
+        <div className="flex gap-3 flex-wrap">
+          {stats.pendingAgencyLeaves > 0 && (
+            <Link
+              href="/agencies"
+              className="bg-rose-500/10 border border-rose-400/30 text-rose-300 hover:bg-rose-500/20 px-5 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 animate-pulse"
+            >
+              <LogOut size={16} /> {stats.pendingAgencyLeaves} agency leave request{stats.pendingAgencyLeaves > 1 ? 's' : ''}
+            </Link>
+          )}
+          {stats.pendingTopups > 0 && (
+            <Link
+              href="/topups"
+              className="bg-yellow-500/10 border border-yellow-400/30 text-yellow-400 hover:bg-yellow-500/20 px-5 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 animate-pulse"
+            >
+              ⚠ {stats.pendingTopups} pending top-up{stats.pendingTopups > 1 ? 's' : ''} — review now
+            </Link>
+          )}
+        </div>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         {statCards.map((stat) => (
           <div key={stat.name} className="glass-card p-6 group hover:border-pink-500/30 transition-all cursor-default">
             <div className="flex justify-between items-start">

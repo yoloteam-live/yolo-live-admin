@@ -21,8 +21,7 @@ import {
   Video,
   Wifi,
   WifiOff,
-  X,
-} from 'lucide-react';
+  X, Pin} from 'lucide-react';
 
 type HostProfile = {
   full_name: string | null;
@@ -48,6 +47,7 @@ type StreamRow = {
   started_at: string;
   ended_at: string | null;
   last_heartbeat_at?: string | null;
+  pinned_position?: number | null;
   profiles?: HostProfile | HostProfile[] | null;
   host: HostProfile | null;
 };
@@ -130,10 +130,11 @@ export default function LiveRoomsPage() {
         .select(`
           id, broadcaster_id, type, title, tag, cover_url, status,
           current_viewers, peak_viewers, total_gifts, total_earnings,
-          started_at, ended_at, last_heartbeat_at,
+          started_at, ended_at, last_heartbeat_at, pinned_position,
           profiles:broadcaster_id(full_name, display_id, avatar_url, is_banned, role, country)
         `)
         .eq('status', 'live')
+        .order('pinned_position', { ascending: true, nullsFirst: false })
         .order('current_viewers', { ascending: false })
         .order('total_gifts', { ascending: false })
         .limit(PAGE_SIZE);
@@ -283,6 +284,26 @@ export default function LiveRoomsPage() {
     }
   }
 
+  // Pinning puts a room at a fixed slot on the home feed. The RPC re-ranks the
+  // other pins so positions stay 1..n with no duplicates or gaps, so the UI only
+  // has to say which position it wants.
+  async function setPin(stream: StreamRow, position: number | null) {
+    setBusyId(stream.id);
+    try {
+      const { data, error } = await supabase.rpc('admin_set_live_pin', {
+        p_stream_id: stream.id,
+        p_position: position,
+      });
+      if (error || !data?.success) {
+        alert(data?.message || error?.message || 'Could not update the pin.');
+        return;
+      }
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function endStream(stream: StreamRow, reasonText?: string) {
     const reason = reasonText ?? window.prompt(`End ${displayName(stream.host, 'this host')}'s stream?\n\nReason (optional):`);
     if (reason === null) return;
@@ -419,7 +440,17 @@ export default function LiveRoomsPage() {
             const heartbeat = heartbeatTone(stream);
             const viewerCount = stream.current_viewers ?? stream.peak_viewers ?? 0;
             return (
-              <div key={stream.id} className="bg-[#1E1A34] border border-[#251B45] rounded-2xl overflow-hidden">
+              <div
+                key={stream.id}
+                className={`bg-[#1E1A34] rounded-2xl overflow-hidden border ${
+                  stream.pinned_position ? 'border-pink-500/60' : 'border-[#251B45]'
+                }`}
+              >
+                {stream.pinned_position ? (
+                  <div className="bg-pink-500/15 text-pink-300 text-[10px] font-black uppercase tracking-widest px-4 py-1.5 flex items-center gap-1.5">
+                    <Pin size={11} /> Pinned - position {stream.pinned_position}
+                  </div>
+                ) : null}
                 <button
                   onClick={() => setSelected(stream)}
                   className="w-full p-4 border-b border-white/5 flex items-center gap-3 text-left hover:bg-white/[0.03]"
@@ -450,6 +481,38 @@ export default function LiveRoomsPage() {
                   <div className={`flex items-center gap-2 text-[11px] font-bold ${heartbeat.stale ? 'text-amber-300' : 'text-emerald-300'}`}>
                     {heartbeat.stale ? <WifiOff size={13} /> : <Wifi size={13} />}
                     Heartbeat {heartbeat.label}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 pt-1">
+                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mr-0.5">Pin</span>
+                    {[1, 2, 3, 4, 5].map((slot) => {
+                      const active = stream.pinned_position === slot;
+                      return (
+                        <button
+                          key={slot}
+                          onClick={() => setPin(stream, active ? null : slot)}
+                          disabled={busyId === stream.id}
+                          title={active ? `Unpin from position ${slot}` : `Pin to position ${slot}`}
+                          className={`w-7 h-7 rounded-lg text-[11px] font-black transition-colors disabled:opacity-50 ${
+                            active
+                              ? 'bg-pink-500 text-white'
+                              : 'bg-white/5 hover:bg-white/15 text-gray-400'
+                          }`}
+                        >
+                          {slot}
+                        </button>
+                      );
+                    })}
+                    {stream.pinned_position ? (
+                      <button
+                        onClick={() => setPin(stream, null)}
+                        disabled={busyId === stream.id}
+                        title="Remove pin"
+                        className="ml-auto text-[10px] font-bold text-gray-400 hover:text-white px-2 py-1 rounded-lg hover:bg-white/10 disabled:opacity-50"
+                      >
+                        Unpin
+                      </button>
+                    ) : null}
                   </div>
 
                   <div className="flex gap-2 pt-1">

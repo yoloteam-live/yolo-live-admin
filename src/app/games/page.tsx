@@ -113,6 +113,18 @@ const GLOBAL_PAYOUT_GAME_IDS = new Set(['greedy_lion', 'greedy_pro', 'tin_patti_
 const MANAGED_ROUND_GAME_IDS = new Set(['greedy_lion', 'greedy_pro', 'tin_patti_pro', 'lucky_dice', 'crash']);
 const APP_GAME_IDS = ['greedy_lion', 'greedy_pro', 'tin_patti_pro', 'lucky_dice', 'crash'];
 
+const DEFAULT_CRASH_CONFIG: CrashAdminConfig = {
+  game_id: 'crash', table_id: 'global', is_active: false, maintenance: true,
+  betting_duration_ms: 8000, result_duration_ms: 5000, growth_rate: 0.08,
+  house_edge_bps: 100, max_crash_multiplier_bp: 100000,
+  min_bet: 100, max_bet: 100000, max_players: 10000,
+  auto_cashout_min_bp: 101, auto_cashout_max_bp: 100000,
+  max_round_liability: 100000000, daily_loss_cap: null, house_profile_id: null,
+  bot_enabled: false, bot_count_min: 8, bot_count_max: 25,
+  bot_bet_min: 500, bot_bet_max: 50000, bot_cashout_min_bp: 105, bot_cashout_max_bp: 805,
+  bot_activity_min_ms: 250, bot_activity_max_ms: 7500,
+};
+
 const DEFAULT_GLOBAL_RULES = {
   pizza_enabled: true,
   pizza_per_hour: 0,
@@ -215,13 +227,11 @@ export default function GameControlPage() {
     }
     if (data) {
       const rows = [...data] as GameSetting[];
-      if (crashResult.data) {
-        const current = rows.find((row) => row.id === 'crash');
-        const merged = crashSetting(crashResult.data as CrashAdminConfig, current);
-        const index = rows.findIndex((row) => row.id === 'crash');
-        if (index >= 0) rows[index] = merged;
-        else rows.push(merged);
-      }
+      const current = rows.find((row) => row.id === 'crash');
+      const merged = crashSetting((crashResult.data as CrashAdminConfig | null) || DEFAULT_CRASH_CONFIG, current);
+      const index = rows.findIndex((row) => row.id === 'crash');
+      if (index >= 0) rows[index] = merged;
+      else rows.push(merged);
       setSettings(rows.sort((a, b) => APP_GAME_IDS.indexOf(a.id) - APP_GAME_IDS.indexOf(b.id)));
       const houseIds = rows
         .map((row: GameSetting) => row.house_profile_id)
