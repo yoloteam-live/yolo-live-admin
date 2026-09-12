@@ -43,6 +43,70 @@ body {
   -webkit-text-fill-color: transparent;
 }
 
+.legal-copy {
+  color: #cbd5e1;
+  font-size: 0.975rem;
+  line-height: 1.8;
+}
+
+.legal-copy section + section {
+  margin-top: 2.75rem;
+  padding-top: 2.75rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.legal-copy h2 {
+  margin-bottom: 1rem;
+  color: #fff;
+  font-size: 1.35rem;
+  font-weight: 850;
+  letter-spacing: -0.02em;
+}
+
+.legal-copy h3 {
+  margin: 1.5rem 0 0.65rem;
+  color: #f1f5f9;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.legal-copy p + p,
+.legal-copy p + ul,
+.legal-copy ul + p {
+  margin-top: 1rem;
+}
+
+.legal-copy ul {
+  list-style: disc;
+  padding-left: 1.3rem;
+}
+
+.legal-copy li + li {
+  margin-top: 0.65rem;
+}
+
+.legal-copy li::marker {
+  color: #f472b6;
+}
+
+.legal-copy strong {
+  color: #e2e8f0;
+  font-weight: 750;
+}
+
+.legal-copy a {
+  color: #f9a8d4;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-color: rgba(249, 168, 212, 0.35);
+  text-underline-offset: 3px;
+}
+
+.legal-copy a:hover {
+  color: #fbcfe8;
+  text-decoration-color: currentColor;
+}
+
 /* Dashboard-wide responsive safeguards. They intentionally affect layout
    only; page actions, forms and data rendering remain unchanged. */
 .admin-content,

@@ -16,7 +16,7 @@ type AccessRpc = {
   is_active?: boolean;
 };
 
-const PUBLIC_SECRET_ROUTES = ['/vltx-9q4r-aurora-ledger'];
+const PUBLIC_ROUTES = ['/privacy', '/terms', '/vltx-9q4r-aurora-ledger'];
 
 export default function AuthGate({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -25,10 +25,10 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [access, setAccess] = useState<AdminAccess | null>(null);
 
   const isLoginPage = pathname === '/login';
-  const isPublicSecretPage = PUBLIC_SECRET_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+  const isPublicPage = PUBLIC_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
 
   useEffect(() => {
-    if (isPublicSecretPage) {
+    if (isPublicPage) {
       return;
     }
 
@@ -167,10 +167,10 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       if (roleSub) { try { roleSub.unsubscribe(); } catch {} }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname, isPublicSecretPage]);
+  }, [pathname, isPublicPage]);
 
   // Login page: render children when no session, otherwise effect redirects
-  if (isLoginPage || isPublicSecretPage) {
+  if (isLoginPage || isPublicPage) {
     return <>{children}</>;
   }
 
