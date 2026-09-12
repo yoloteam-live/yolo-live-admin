@@ -80,6 +80,14 @@ type HouseProfile = {
   diamonds?: number | null;
 };
 
+type TeenPattiWinStrategy = {
+  enabled: boolean;
+  cycle: 10;
+  max: number;
+  medium: number;
+  min: number;
+};
+
 const GREEDY_LION_ITEMS = [
   { id: 'corn', label: 'Corn' },
   { id: 'chicken', label: 'Chicken' },
@@ -134,6 +142,14 @@ const DEFAULT_GLOBAL_RULES = {
   salad_max_per_day: 0,
   target_payout_min_percent: 30,
   target_payout_max_percent: 40,
+};
+
+const DEFAULT_TIN_PATTI_WIN_STRATEGY: TeenPattiWinStrategy = {
+  enabled: false,
+  cycle: 10,
+  max: 2,
+  medium: 3,
+  min: 5,
 };
 
 function isGlobalPayoutGame(id: string) {
@@ -206,6 +222,7 @@ export default function GameControlPage() {
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState<GameSetting[]>([]);
   const [houseProfiles, setHouseProfiles] = useState<Record<string, HouseProfile>>({});
+  const [teenPattiStrategy, setTeenPattiStrategy] = useState<TeenPattiWinStrategy>(DEFAULT_TIN_PATTI_WIN_STRATEGY);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
@@ -217,10 +234,18 @@ export default function GameControlPage() {
 
   async function fetchSettings() {
     setLoading(true);
-    const [{ data, error }, crashResult] = await Promise.all([
+    const [{ data, error }, crashResult, strategyResult] = await Promise.all([
       supabase.from('game_settings').select('*').in('id', APP_GAME_IDS),
       supabase.from('crash_game_configs').select('*').eq('game_id', 'crash').eq('table_id', 'global').maybeSingle(),
+      supabase.from('system_settings').select('value').eq('key', 'tin_patti_pro_win_strategy').maybeSingle(),
     ]);
+
+    const savedStrategy = strategyResult.data?.value as Partial<TeenPattiWinStrategy> | null;
+    setTeenPattiStrategy({
+      ...DEFAULT_TIN_PATTI_WIN_STRATEGY,
+      ...(savedStrategy || {}),
+      cycle: 10,
+    });
     
     if (error) {
       console.error("Supabase Error:", error);
@@ -283,6 +308,42 @@ export default function GameControlPage() {
       fetchSettings();
     }
     setSaving(false);
+  }
+
+  function updateTeenPattiStrategy<K extends keyof TeenPattiWinStrategy>(
+    key: K,
+    value: TeenPattiWinStrategy[K],
+  ) {
+    setTeenPattiStrategy((current) => ({ ...current, [key]: value }));
+  }
+
+  async function saveTeenPattiStrategy() {
+    const counts = [teenPattiStrategy.max, teenPattiStrategy.medium, teenPattiStrategy.min];
+    if (counts.some((value) => !Number.isInteger(value) || value < 0)) {
+      alert('All Teen Patti win counts must be whole numbers of 0 or greater.');
+      return;
+    }
+    if (counts.reduce((total, value) => total + value, 0) !== 10) {
+      alert('Max, mid and small pot wins must add up to exactly 10 rounds.');
+      return;
+    }
+
+    setSaving(true);
+    const { data, error } = await supabase.rpc('admin_update_tin_patti_win_strategy', {
+      p_enabled: teenPattiStrategy.enabled,
+      p_max: teenPattiStrategy.max,
+      p_medium: teenPattiStrategy.medium,
+      p_min: teenPattiStrategy.min,
+    });
+    setSaving(false);
+
+    if (error || data?.success === false) {
+      alert(data?.message || error?.message || 'Failed to save Teen Patti win control.');
+      return;
+    }
+    setSuccess(true);
+    setTimeout(() => setSuccess(false), 3000);
+    await fetchSettings();
   }
 
   // Save the bet-limit + multiplier block for a single game. The
@@ -367,7 +428,7 @@ export default function GameControlPage() {
         alert('Result popup duration must be at least 3 seconds.');
         return;
       }
-      if (isGlobalPayoutGame(game.id)) {
+      if (isGlobalPayoutGame(game.id) && !(game.id === 'tin_patti_pro' && teenPattiStrategy.enabled)) {
         const rules = globalRules(game);
         const minPayout = Number(rules.target_payout_min_percent ?? 30);
         const maxPayout = Number(rules.target_payout_max_percent ?? 40);
@@ -503,10 +564,12 @@ export default function GameControlPage() {
                 <div className="flex items-center justify-between mb-4">
                   <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
                     <Settings2 size={14} className="text-pink-500" />
-                    {isGlobalPayoutGame(game.id) ? 'Target Payout Range' : game.id === 'lucky_dice' ? 'Result Model' : isCrashGame(game.id) ? 'Fairness Model' : 'Win Probability (RTP)'}
+                    {game.id === 'tin_patti_pro' && teenPattiStrategy.enabled ? 'Target Payout Range (Disabled)' : isGlobalPayoutGame(game.id) ? 'Target Payout Range' : game.id === 'lucky_dice' ? 'Result Model' : isCrashGame(game.id) ? 'Fairness Model' : 'Win Probability (RTP)'}
                   </label>
                   <span className="text-2xl font-black text-pink-500">
-                    {isGlobalPayoutGame(game.id)
+                    {game.id === 'tin_patti_pro' && teenPattiStrategy.enabled
+                      ? '10-ROUND CONTROL'
+                      : isGlobalPayoutGame(game.id)
                       ? `${globalRules(game).target_payout_min_percent}-${globalRules(game).target_payout_max_percent}%`
                       : game.id === 'lucky_dice' ? 'SERVER RNG'
                       : isCrashGame(game.id) ? 'COMMIT / REVEAL'
@@ -521,7 +584,8 @@ export default function GameControlPage() {
                       <input
                         type="number"
                         min={0}
-                        className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                        disabled={game.id === 'tin_patti_pro' && teenPattiStrategy.enabled}
+                        className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500 disabled:cursor-not-allowed disabled:opacity-40"
                         value={Number(globalRules(game).target_payout_min_percent ?? 30)}
                         onChange={(e) => {
                           const rules = globalRules(game);
@@ -537,7 +601,8 @@ export default function GameControlPage() {
                       <input
                         type="number"
                         min={0}
-                        className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500"
+                        disabled={game.id === 'tin_patti_pro' && teenPattiStrategy.enabled}
+                        className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-pink-500 disabled:cursor-not-allowed disabled:opacity-40"
                         value={Number(globalRules(game).target_payout_max_percent ?? 40)}
                         onChange={(e) => {
                           const rules = globalRules(game);
@@ -585,10 +650,12 @@ export default function GameControlPage() {
                 </div>
               </div>
 
-              <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex gap-4 items-start">
+                <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex gap-4 items-start">
                 <AlertTriangle className="text-yellow-500 shrink-0" size={20} />
                 <p className="text-[11px] text-gray-400 leading-relaxed font-medium">
-                  {isGlobalPayoutGame(game.id)
+                  {game.id === 'tin_patti_pro' && teenPattiStrategy.enabled
+                    ? 'The 10-round win control is active, so payout percentage targeting is ignored automatically.'
+                    : isGlobalPayoutGame(game.id)
                     ? 'Target Payout Range chooses an exact item inside the min/max payout range. If no item is inside the range, it chooses the closest non-zero item below the minimum and avoids going above the maximum.'
                     : game.id === 'lucky_dice'
                       ? 'The backend rolls three dice, derives every winning zone, and settles all matching bets atomically. The client never chooses the dice or payout.'
@@ -597,6 +664,63 @@ export default function GameControlPage() {
                     : <>Lowering the probability increases the house edge (profit), while raising it makes users win more often. Factory default is <span className="text-white">30%</span>.</>}
                 </p>
               </div>
+
+              {game.id === 'tin_patti_pro' && (
+                <div className="border border-violet-500/25 bg-violet-500/5 rounded-2xl p-4 space-y-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-widest text-violet-300">10-round win control</p>
+                      <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
+                        Each round with real bets consumes one randomly ordered slot. Forced next result still overrides the cycle.
+                      </p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        className="sr-only peer"
+                        checked={teenPattiStrategy.enabled}
+                        onChange={(e) => updateTeenPattiStrategy('enabled', e.target.checked)}
+                      />
+                      <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-violet-500" />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    {([
+                      ['max', 'Max pot wins'],
+                      ['medium', 'Mid pot wins'],
+                      ['min', 'Small pot wins'],
+                    ] as const).map(([key, label]) => (
+                      <div key={key}>
+                        <label className="text-[10px] uppercase text-gray-500 font-bold">{label}</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={10}
+                          step={1}
+                          className="w-full bg-[#0E111E] border border-white/10 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-violet-500"
+                          value={teenPattiStrategy[key]}
+                          onChange={(e) => updateTeenPattiStrategy(key, Math.max(0, Math.min(10, parseInt(e.target.value) || 0)))}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className={`rounded-lg border px-3 py-2 text-xs ${teenPattiStrategy.max + teenPattiStrategy.medium + teenPattiStrategy.min === 10 ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/25 bg-amber-500/10 text-amber-300'}`}>
+                    {teenPattiStrategy.max + teenPattiStrategy.medium + teenPattiStrategy.min === 10
+                      ? `${teenPattiStrategy.max} max + ${teenPattiStrategy.medium} mid + ${teenPattiStrategy.min} small = 10 rounds`
+                      : `Counts currently total ${teenPattiStrategy.max + teenPattiStrategy.medium + teenPattiStrategy.min}; they must total 10.`}
+                  </div>
+
+                  <button
+                    disabled={saving || teenPattiStrategy.max + teenPattiStrategy.medium + teenPattiStrategy.min !== 10}
+                    onClick={saveTeenPattiStrategy}
+                    className="w-full bg-violet-500 hover:bg-violet-400 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {saving ? <Loader2 className="animate-spin" size={16} /> : <><Save size={16} /> Save 10-Round Control</>}
+                  </button>
+                </div>
+              )}
 
               <button
                 disabled={saving}
